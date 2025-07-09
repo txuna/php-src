@@ -321,7 +321,7 @@ struct _zend_mm_chunk {
 	char               reserve[64 - (sizeof(void*) * 3 + sizeof(uint32_t) * 3)];
 	zend_mm_heap       heap_slot;               /* used only in main chunk */
 	zend_mm_page_map   free_map;                /* 512 bits or 64 bytes */
-	zend_mm_page_info  map[ZEND_MM_PAGES];      /* 2 KB = 512 * 4 */
+	zend_mm_page_info  map[ZEND_MM_PAGES];      /* 2 KB = 512 * 4 */  // free_map이라는 뭔 차이지? 실제 사용중인 page의 할다 여부?
 };
 
 struct _zend_mm_page {
@@ -578,6 +578,7 @@ static void *zend_mm_mmap(size_t size)
 ZEND_ATTRIBUTE_CONST static zend_always_inline int zend_mm_bitset_nts(zend_mm_bitset bitset)
 {
 #if (defined(__GNUC__) || __has_builtin(__builtin_ctzl)) && SIZEOF_ZEND_LONG == SIZEOF_LONG && defined(PHP_HAVE_BUILTIN_CTZL)
+	// 이 함수는 정수의 하위 비트부터 시작하여 0이 아닌 첫 비트(= 1)가 나오는 위치를 계산하는 데 사용됩니다.
 	return __builtin_ctzl(~bitset);
 #elif (defined(__GNUC__) || __has_builtin(__builtin_ctzll)) && defined(PHP_HAVE_BUILTIN_CTZLL)
 	return __builtin_ctzll(~bitset);
@@ -618,6 +619,7 @@ static zend_always_inline int zend_mm_bitset_is_set(zend_mm_bitset *bitset, int 
 	return ZEND_BIT_TEST(bitset, bit);
 }
 
+// 이로인하여 512바이트가 아닌 64바이트로(512비트) 512개의 표현이 가능함.
 static zend_always_inline void zend_mm_bitset_set_bit(zend_mm_bitset *bitset, int bit)
 {
 	bitset[bit / ZEND_MM_BITSET_LEN] |= (Z_UL(1) << (bit & (ZEND_MM_BITSET_LEN-1)));
@@ -908,6 +910,10 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 			int best = -1;
 			uint32_t best_len = ZEND_MM_PAGES; // 512
 			uint32_t free_tail = chunk->free_tail;
+			/*
+				free_map은 64바이트임. 1바이트는 8비트 
+				비트 연산으로 64바이트로 512개의 비트 생성 가능 즉 64바이트로 512개의 페이지의 할당여부를 확인할 수 있다.
+			*/
 			zend_mm_bitset *bitset = chunk->free_map;
 			zend_mm_bitset tmp = *(bitset++);
 			uint32_t i = 0;
@@ -927,12 +933,13 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 					tmp = *(bitset++);
 				}
 				/* find first 0 bit */
+				// zend_mm_bitset_nts: 정수의 하위 비트에서 시작하여 0이 아닌 1비트가 나오는 시작점을 찾음
 				page_num = i + zend_mm_bitset_nts(tmp);
 				/* reset bits from 0 to "bit" */
 				tmp &= tmp + 1;
 				/* skip free blocks */
 				while (tmp == 0) {
-					i += ZEND_MM_BITSET_LEN;
+					i += ZEND_MM_BITSET_LEN; // 64
 					if (i >= free_tail || i == ZEND_MM_PAGES) {
 						len = ZEND_MM_PAGES - page_num;
 						if (len >= pages_count && len < best_len) {
@@ -1252,14 +1259,17 @@ static zend_never_inline void *zend_mm_alloc_small_slow(zend_mm_heap *heap, uint
 	zend_mm_bin *bin;
 	zend_mm_free_slot *p, *end;
 
+	// bin - 4KB * 8?
 	bin = (zend_mm_bin*)zend_mm_alloc_pages(heap, bin_pages[bin_num] ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
 	if (UNEXPECTED(bin == NULL)) {
 		/* insufficient memory */
 		return NULL;
 	}
 
+	// chunk의 주소가 깨지는데 이걸로 복구?
 	chunk = (zend_mm_chunk*)ZEND_MM_ALIGNED_BASE(bin, ZEND_MM_CHUNK_SIZE);
 	page_num = ZEND_MM_ALIGNED_OFFSET(bin, ZEND_MM_CHUNK_SIZE) / ZEND_MM_PAGE_SIZE;
+	// ?
 	chunk->map[page_num] = ZEND_MM_SRUN(bin_num);
 	if (bin_pages[bin_num] > 1) {
 		uint32_t i = 1;
@@ -1269,6 +1279,14 @@ static zend_never_inline void *zend_mm_alloc_small_slow(zend_mm_heap *heap, uint
 			i++;
 		} while (i < bin_pages[bin_num]);
 	}
+
+	// bin_num의 값 6이면 56만큼 크기를 가진 공간을 free_slot[6]->next_free_slot으로 나누고 있음
+	// 하나의 4KB에 대해 56이 만큼 분할하고 있는거 같음
+	// next_free_slot이 72개 만큼 나오긴했음 나머지 하나는 0xfffff4c01000 즉 할당받고 사용할 메모리 주소
+	// free_slot[6]->[56크기, 56크기]
+	// free_slot[7]->[X크기, X크기]
+	// 
+	//
 
 	/* create a linked list of elements from 1 to last */
 	end = (zend_mm_free_slot*)((char*)bin + (bin_data_size[bin_num] * (bin_elements[bin_num] - 1)));
