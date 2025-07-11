@@ -239,7 +239,7 @@ static bool zend_mm_use_huge_pages = false;
  * It contains service information about all pages.
  *
  * free_pages - current number of free pages in this chunk
- *
+ * // free_tail 아무리봐도 할당의 연속같은데
  * free_tail  - number of continuous free pages at the end of chunk
  *
  * free_map   - bitset (a bit for each page). The bit is set if the corresponding
@@ -322,6 +322,7 @@ struct _zend_mm_chunk {
 	zend_mm_heap       heap_slot;               /* used only in main chunk */
 	zend_mm_page_map   free_map;                /* 512 bits or 64 bytes */
 	zend_mm_page_info  map[ZEND_MM_PAGES];      /* 2 KB = 512 * 4 */  // free_map이라는 뭔 차이지? 실제 사용중인 page의 할다 여부?
+	// map은 해당 페이지 넘버의 메타데이터같음
 };
 
 struct _zend_mm_page {
@@ -902,6 +903,7 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 	int steps = 0;
 
 	// 현재 청크가 가지고 있는 free_pages보다 필요한 pages_count보다 적다면
+	// pages_count의 역할
 	while (1) {
 		if (UNEXPECTED(chunk->free_pages < pages_count)) {
 			goto not_found;
@@ -913,15 +915,17 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 			/*
 				free_map은 64바이트임. 1바이트는 8비트 
 				비트 연산으로 64바이트로 512개의 비트 생성 가능 즉 64바이트로 512개의 페이지의 할당여부를 확인할 수 있다.
+				18446744073709551615 이런값이 chunk->free_map[0]에 있는데 어케 나온거지?
 			*/
 			zend_mm_bitset *bitset = chunk->free_map;
 			zend_mm_bitset tmp = *(bitset++);
-			uint32_t i = 0;
+			uint32_t i = 0; // 64 페이지 단위로 움직임 (총 512) 
 
 			while (1) {
 				/* skip allocated blocks */
+				// 8136이 들어올 경우 pages_count = 3 tmp가 -1이면 해당 페이지는 
 				while (tmp == (zend_mm_bitset)-1) {
-					i += ZEND_MM_BITSET_LEN;
+					i += ZEND_MM_BITSET_LEN; // 64
 					if (i == ZEND_MM_PAGES) {
 						if (best > 0) {
 							page_num = best;
@@ -933,9 +937,9 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 					tmp = *(bitset++);
 				}
 				/* find first 0 bit */
-				// zend_mm_bitset_nts: 정수의 하위 비트에서 시작하여 0이 아닌 1비트가 나오는 시작점을 찾음
-				page_num = i + zend_mm_bitset_nts(tmp);
-				/* reset bits from 0 to "bit" */
+				// zend_mm_bitset_nts: 정수의 하위 비트에서 시작하여 1이 아닌 0비트가 나오는 시작점을 찾음
+				page_num = i + zend_mm_bitset_nts(tmp); // tmp가 0x3fffff라면 리턴값은 22임
+				/* reset bits from 0 to "bit" */ // ?????????????  // 64 + 22번째 pages 사용가능한지 확인해야하는데 아래 비트연산의 목적은 뭐지?
 				tmp &= tmp + 1;
 				/* skip free blocks */
 				while (tmp == 0) {
@@ -1057,11 +1061,8 @@ found:
 static zend_always_inline void *zend_mm_alloc_large_ex(zend_mm_heap *heap, size_t size ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
 {
 	int pages_count = (int)ZEND_MM_SIZE_TO_NUM(size, ZEND_MM_PAGE_SIZE);
-#if ZEND_DEBUG
-	void *ptr = zend_mm_alloc_pages(heap, pages_count, size ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
-#else
 	void *ptr = zend_mm_alloc_pages(heap, pages_count ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
-#endif
+
 #if ZEND_MM_STAT
 	do {
 		size_t size = heap->size + pages_count * ZEND_MM_PAGE_SIZE;
@@ -1269,7 +1270,7 @@ static zend_never_inline void *zend_mm_alloc_small_slow(zend_mm_heap *heap, uint
 	// chunk의 주소가 깨지는데 이걸로 복구?
 	chunk = (zend_mm_chunk*)ZEND_MM_ALIGNED_BASE(bin, ZEND_MM_CHUNK_SIZE);
 	page_num = ZEND_MM_ALIGNED_OFFSET(bin, ZEND_MM_CHUNK_SIZE) / ZEND_MM_PAGE_SIZE;
-	// ?
+	// ZEND_MM_SRUN는 소규모 메모리 타입!!!
 	chunk->map[page_num] = ZEND_MM_SRUN(bin_num);
 	if (bin_pages[bin_num] > 1) {
 		uint32_t i = 1;
@@ -1397,6 +1398,7 @@ static zend_always_inline void *zend_mm_alloc_heap(zend_mm_heap *heap, size_t si
 
 static zend_always_inline void zend_mm_free_heap(zend_mm_heap *heap, void *ptr ZEND_FILE_LINE_DC ZEND_FILE_LINE_ORIG_DC)
 {
+	// 주어진 주소에 베이스 어드레스 맞춰져있으니 오프셋구할 수 있는건가?
 	size_t page_offset = ZEND_MM_ALIGNED_OFFSET(ptr, ZEND_MM_CHUNK_SIZE);
 
 	if (UNEXPECTED(page_offset == 0)) {
@@ -1404,6 +1406,7 @@ static zend_always_inline void zend_mm_free_heap(zend_mm_heap *heap, void *ptr Z
 			zend_mm_free_huge(heap, ptr ZEND_FILE_LINE_RELAY_CC ZEND_FILE_LINE_ORIG_RELAY_CC);
 		}
 	} else {
+		// 메모리 주소로 어느 청크에 포함되어있는지 아는건가
 		zend_mm_chunk *chunk = (zend_mm_chunk*)ZEND_MM_ALIGNED_BASE(ptr, ZEND_MM_CHUNK_SIZE);
 		int page_num = (int)(page_offset / ZEND_MM_PAGE_SIZE);
 		zend_mm_page_info info = chunk->map[page_num];
