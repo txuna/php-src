@@ -921,6 +921,24 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 			zend_mm_bitset tmp = *(bitset++);
 			uint32_t i = 0; // 64 페이지 단위로 움직임 (총 512) 
 
+			/*
+				아래 반복문의 구조
+				100 110 | 000 000 구조가 있을 때 pages_count가 3이라면 
+
+				// 0비트가 나오는 구간을 찾음 
+				page_num = i + zend_mm_bitset_nts(tmp) // 0 나옴
+
+				// 처음 만나는 0부타 최하위까지 0으로 만듦 100 110 
+				tmp &= tmp + 1
+
+				// 1비트가 나오는 구간에 page_num을 뺌 1비트가 처음 나오는 구간은 1임 page_num은 0임. 
+				// 할당 가능한 free구간은 1개임 원하는 pages_count보다작음
+				len = i + zend_ulong_ntz(tmp) - page_num;
+
+				100 110에서 아래 연산을 하여 처음 나오는 1구간밑으로 모두 1로 만듦 
+				tmp |= tmp - 1; -> 100 111 다시 위로 감. 즉, 한 블럭내에서 다음 연속 free구간을 찾음
+				위의 비트연산으로 loop하나 더 벗겨낼 수 있는 구조임 다만 대가리 아픔
+			*/
 			while (1) {
 				/* skip allocated blocks */
 				// 8136이 들어올 경우 pages_count = 3 tmp가 -1이면 해당 페이지는 
@@ -940,8 +958,9 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 				// zend_mm_bitset_nts: 정수의 하위 비트에서 시작하여 1이 아닌 0비트가 나오는 시작점을 찾음
 				page_num = i + zend_mm_bitset_nts(tmp); // tmp가 0x3fffff라면 리턴값은 22임
 				/* reset bits from 0 to "bit" */ // ?????????????  // 64 + 22번째 pages 사용가능한지 확인해야하는데 아래 비트연산의 목적은 뭐지?
-				tmp &= tmp + 1;
-				/* skip free blocks */
+				tmp &= tmp + 1; // 최하위(lsb) 0비트가 시작되는 지점까지 0으로 만듦 (1001111) 이면 100 0000으로 
+				/* skip free blocks */ // 한블럭 자체가 아예 비워져있는지 바로 확인하면 안되나? 굳이 비트연산을 할 필요가
+				// 한 블럭 전체가 free인지?
 				while (tmp == 0) {
 					i += ZEND_MM_BITSET_LEN; // 64
 					if (i >= free_tail || i == ZEND_MM_PAGES) {
@@ -963,16 +982,27 @@ static void *zend_mm_alloc_pages(zend_mm_heap *heap, uint32_t pages_count ZEND_F
 					tmp = *(bitset++);
 				}
 				/* find first 1 bit */
+				// 1비트가 나올 때까지의 길이 100 000이면 5인거지 - page_num해서 
+				// 해당 블럭에서 연속적인 해제공간을 확인하고 필요한 page_count와 딱맞는지 확인한다.
+
+				// 근데 계산할 때 tmp &= tmp + 1이전의 값은 몰라도되나? 100111일때 111은 아직 할당중인데 실제 계산은 100 000인데?
+
+				// 100 111일때 0의 갯수를 찾는 트릭구조네 
+				// 100 000으로 만든다음 zend_ulong_ntz로 하위비트검사하다감1이나 오는구간까지 체크함. 즉 5 
+				// 여기서 page_num(아까 구한 연속 1의 갯수)를 빼면 남는 페이지 갯수확인가능 선형탐색보다 빠름 -> len은 2
+
 				len = i + zend_ulong_ntz(tmp) - page_num;
 				if (len >= pages_count) {
 					if (len == pages_count) {
-						goto found;
-					} else if (len < best_len) {
+						goto found; // 딱맞다면
+					} else if (len < best_len) { // len이 page_count보다 클 때 최적의 길이 best_len을 해당 값으로 맞춘다. 
 						best_len = len;
 						best = page_num;
 					}
 				}
 				/* set bits from 0 to "bit" */
+				// 처음 나오는 1이하 모두 1로 셋
+				// 이것의 목적은? 
 				tmp |= tmp - 1;
 			}
 		}
