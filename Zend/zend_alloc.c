@@ -1999,6 +1999,7 @@ ZEND_API size_t zend_mm_gc(zend_mm_heap *heap)
 	for (i = 0; i < ZEND_MM_BINS; i++) {
 		has_free_pages = false;
 		p = heap->free_slot[i];
+		// 해당 빈의 갯수만큼 모두가 free라면
 		while (p != NULL) {
 			chunk = (zend_mm_chunk*)ZEND_MM_ALIGNED_BASE(p, ZEND_MM_CHUNK_SIZE);
 			ZEND_MM_CHECK(chunk->heap == heap, "zend_mm_heap corrupted");
