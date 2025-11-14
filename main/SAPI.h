@@ -238,57 +238,92 @@ SAPI_API void sapi_terminate_process(void);
 END_EXTERN_C()
 
 struct _sapi_module_struct {
+	/* php_sapi_name() */
 	char *name;
+	/* phpinfo() */
 	char *pretty_name;
 
+	/* MINIT */
 	int (*startup)(struct _sapi_module_struct *sapi_module);
+	/* MSHUTDOWN */
 	int (*shutdown)(struct _sapi_module_struct *sapi_module);
 
+	/* RINIT */
 	int (*activate)(void);
+	/* RSHUTDOWN */
 	int (*deactivate)(void);
 
+	/* unbuffered write */
 	size_t (*ub_write)(const char *str, size_t str_length);
+	
 	void (*flush)(void *server_context);
+	/* script file info */
 	zend_stat_t *(*get_stat)(void);
+	/* env variable read */
 	char *(*getenv)(const char *name, size_t name_len);
 
+	/* error handler */
 	void (*sapi_error)(int type, const char *error_msg, ...) ZEND_ATTRIBUTE_FORMAT(printf, 2, 3);
 
+	/* add/update header */
 	int (*header_handler)(sapi_header_struct *sapi_header, sapi_header_op_enum op, sapi_headers_struct *sapi_headers);
+	/* either ths is NULL */
 	int (*send_headers)(sapi_headers_struct *sapi_headers);
 	void (*send_header)(sapi_header_struct *sapi_header, void *server_context);
 
+	/* decode POST data */
 	size_t (*read_post)(char *buffer, size_t count_bytes);
+	/* import cookies */
 	char *(*read_cookies)(void);
 
+	/* $_SERVER */
 	void (*register_server_variables)(zval *track_vars_array);
+	/* error logging */
 	void (*log_message)(const char *message, int syslog_type_int);
+	/* for Apache */
 	zend_result (*get_request_time)(double *request_time);
+	/* used by Apache */
 	void (*terminate_process)(void);
 
+	/* different php ini path */
 	char *php_ini_path_override;
 
+	/* POST + filtering */
 	void (*default_post_reader)(void);
+	/* input filtering */
 	void (*treat_data)(int arg, char *str, zval *destArray);
+	/* PHP_BINARY const */
 	char *executable_location;
 
+	/* use php.ini ot not */
 	int php_ini_ignore;
+	/* no ini in cwd */
 	int php_ini_ignore_cwd; /* don't look for php.ini in the current directory */
 
+	/* conn's FD */
 	int (*get_fd)(int *fd);
 
+	/* force HTTP/1.0 */
 	int (*force_http_10)(void);
 
+	/* current user id */
 	int (*get_target_uid)(uid_t *);
+	/* currrent group id */
 	int (*get_target_gid)(gid_t *);
 
+	/* input filtering */
 	unsigned int (*input_filter)(int arg, const char *var, char **val, size_t val_len, size_t *new_val_len);
 
+	/* some INI defaults */
 	void (*ini_defaults)(HashTable *configuration_hash);
+	/* TEXT or HTML */
 	int phpinfo_as_text;
 
+	/* ini entries w/o file */
 	const char *ini_entries;
+	/* for loading PHP_FUNCIONS */
 	const zend_function_entry *additional_functions;
+	
 	unsigned int (*input_filter_init)(void);
 
 	int (*pre_request_init)(void); /* called before activate and before the post data read - used for .user.ini */
