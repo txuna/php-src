@@ -73,8 +73,8 @@ if test "$PHP_EFPM" != "no"; then
   PHP_ADD_BUILD_DIR([sapi/efpm/efpm])
 
   dnl Source files for efpm SAPI
-  PHP_EFPM_FILES="efpm/efpm_main.c \
-    efpm/efpm.c \
+  PHP_EFPM_FILES="efpm/efpm.c \
+    efpm/efpm_main.c \
   "
 
   dnl Select SAPI: program type (builds an executable)
