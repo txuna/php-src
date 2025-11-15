@@ -1,5 +1,5 @@
-#ifndef FPM_CONF_H
-#define FPM_CONF_H 1
+#ifndef EFPM_CONF_H
+#define EFPM_CONF_H 1
 
 struct key_value_s;
 

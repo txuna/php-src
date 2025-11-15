@@ -5,6 +5,7 @@ dnl    sapi/efpm/config.m4
 dnl    sapi/efpm/Makefile.frag   (a.k.a. Makefile fragment)
 dnl    sapi/efpm/efpm/efpm_main.c
 dnl    sapi/efpm/efpm/efpm.c
+dnl    sapi/efpm/efpm/efpm_event.c
 dnl ======================================================================
 
 PHP_ARG_ENABLE([efpm],
@@ -74,6 +75,8 @@ if test "$PHP_EFPM" != "no"; then
 
   dnl Source files for efpm SAPI
   PHP_EFPM_FILES="efpm/efpm.c \
+    efpm/efpm_event.c \
+    efpm/efpm_worker.c \
     efpm/efpm_main.c \
   "
 

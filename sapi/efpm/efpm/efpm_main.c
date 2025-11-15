@@ -56,6 +56,7 @@
 #include "fastcgi.h"
 
 #include <php_config.h>
+#include "efpm_event.h"
 #include "efpm.h"
 #include "efpm_config.h"
 
@@ -64,14 +65,33 @@ sudo apt install make autoconf gcc cmake pkg-config flex bison re2c libxml2-dev 
 
 ./buildconf —force
 ./configure --enable-debug --disable-cgi --enable-efpm --disable-fpm --disable-phpdbg
-
-./configure --enable-debug --disable-cgi --enable-fpm --disable-phpdbg
 ./config.nice
 make -j $(nproc)
 sudo make install
 
 php-efpm
 */
+
+static int sapi_cgi_active();
+static int sapi_cgi_deactivate();
+static char *sapi_cgibin_getenv(const char *name, size_t name_len);
+static void sapi_cgi_register_variables(zval *track_vars_array);
+static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes);
+static char *sapi_cgi_read_cookies(void);
+static int sapi_cgi_send_headers(sapi_headers_struct *sapi_headers);
+static void sapi_cgibin_flush(void *server_context);
+static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_length) ;
+static size_t sapi_cgibin_ub_write(const char *str, size_t str_length);
+static int php_cgi_startup(struct _sapi_module_struct *sapi_module);
+void efpm_request_accepting();
+void efpm_request_reading_headers();
+void efpm_request_finished();
+static int efpm_php_zend_ini_alter_master(char *name, int name_length, char *new_value, int new_value_length, int mode, int stage);
+int efpm_php_apply_defines_ex(struct key_value_s *kv, int mode);
+static int is_valid_path(const char *path);
+static void fastcgi_ini_parser(zval *arg1, zval *arg2, zval *arg3, int callback_type, void *arg);
+static void init_request_info(void);
+static fcgi_request *efpm_init_request(int listen_fd);
 
 typedef struct _php_cgi_globals_struct {
 	bool rfc2616_headers;
@@ -487,7 +507,7 @@ void efpm_request_finished() {
 #define EFPM_PHP_INI_EXTENSION_FAILED 0
 #define EFPM_PHP_INI_EXTENSION_LOADED 2
 
-static int fpm_php_zend_ini_alter_master(char *name, int name_length, char *new_value, int new_value_length, int mode, int stage) /* {{{ */
+static int efpm_php_zend_ini_alter_master(char *name, int name_length, char *new_value, int new_value_length, int mode, int stage) /* {{{ */
 {
 	zend_ini_entry *ini_entry;
 	zend_string *duplicate;
@@ -516,7 +536,7 @@ static int fpm_php_zend_ini_alter_master(char *name, int name_length, char *new_
 }
 /* }}} */
 
-int fpm_php_apply_defines_ex(struct key_value_s *kv, int mode) /* {{{ */
+int efpm_php_apply_defines_ex(struct key_value_s *kv, int mode) /* {{{ */
 {
 
 	char *name = kv->key;
@@ -546,7 +566,7 @@ int fpm_php_apply_defines_ex(struct key_value_s *kv, int mode) /* {{{ */
 		return Z_TYPE(zv) == IS_TRUE ? EFPM_PHP_INI_EXTENSION_LOADED : EFPM_PHP_INI_EXTENSION_FAILED;
 	}
 
-	if (fpm_php_zend_ini_alter_master(name, name_len, value, value_len, mode, PHP_INI_STAGE_ACTIVATE) == FAILURE) {
+	if (efpm_php_zend_ini_alter_master(name, name_len, value, value_len, mode, PHP_INI_STAGE_ACTIVATE) == FAILURE) {
 		return EFPM_PHP_INI_ALTERING_ERROR;
 	}
 
@@ -627,7 +647,7 @@ static void fastcgi_ini_parser(zval *arg1, zval *arg2, zval *arg3, int callback_
 	kv.key = key;
 	kv.value = value;
 	kv.next = NULL;
-	if (fpm_php_apply_defines_ex(&kv, *mode) == -1) {
+	if (efpm_php_apply_defines_ex(&kv, *mode) == -1) {
 		printf("Passing INI directive through FastCGI: unable to set '%s'\n", key);
 	}
 }
@@ -1080,11 +1100,22 @@ int main(int argc, char **argv) {
         return EFPM_EXIT_SOFTWARE;
     }
 
-    if(efpm_init(argc, argv) == EFPM_INIT_ERROR){
-        return EFPM_EXIT_SOFTWARE;
-    }
+	struct efpm_s *efpm = new_efpm(5, true);
+	if(!efpm){
+		return EFPM_EXIT_SOFTWARE;
+	}
 
-    int fcgi_fd = efpm_globals.listening_socket;
+	if((*efpm->init)(efpm) == FAILURE){
+		return EFPM_EXIT_SOFTWARE;
+	}
+
+	if((*efpm->run)(efpm) == FAILURE) {
+		return EFPM_EXIT_SOFTWARE;
+	}
+
+	return EFPM_EXIT_SOFTWARE;
+	// TODO
+    int fcgi_fd = efpm_globals.listening_socket[efpm_globals.child_num];
     fcgi_request *request = efpm_init_request(fcgi_fd);
 
     fpm_is_running = 1;
@@ -1092,6 +1123,7 @@ int main(int argc, char **argv) {
 
     // request loop
     for(;;){
+		// eventLoop wait
         if(fcgi_accept_request(request) < 0){
             printf("failed to accept request\n");
             fcgi_finish_request(request, 1);
@@ -1139,14 +1171,16 @@ int main(int argc, char **argv) {
         }
 
         SG(request_info).path_translated = NULL;
-        php_request_shutdown((void *)0);
+        php_request_shutdown((void *)0); // write to client
     }
 
-    
-    //
+	// efpm_network_shutdown();
     fcgi_shutdown();
     php_module_shutdown();
-    sapi_shutdown();
+    
+	if(parent) {
+		sapi_shutdown();
+	}
 
     return 0;
 }

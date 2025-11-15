@@ -1301,7 +1301,6 @@ void fcgi_close(fcgi_request *req, int force, int destroy)
 #endif
 		req->fd = -1;
 		
-		// 여기서 터지는중
 		req->hook.on_close();
 	}
 }
@@ -1349,6 +1348,9 @@ static int fcgi_is_allowed(void) {
 	return 0;
 }
 
+// on read로 하나 만들자
+// server socket read - fcgi_accept_request 
+// client socket read - fcgi_read_request
 int fcgi_accept_request(fcgi_request *req)
 {
 #ifdef _WIN32

@@ -16,27 +16,48 @@ enum efpm_init_return_status {
 	EFPM_INIT_EXIT_OK,
 };
 
-int efpm_run(int *max_requests);
-enum efpm_init_return_status efpm_init(int argc, char **argv);
+struct efpm_conn_s {
+
+};
+
+struct efpm_child_s {
+	pid_t pid;
+	int (*init)(struct efpm_child_s *this);
+	int (*run)(struct efpm_child_s *this);
+	int (*clean)(struct efpm_child_s *this);
+};
+
+struct efpm_s {
+	int worker;
+	int reuseport; 
+	int listening_socket;
+	int port;
+	struct efpm_child_s *childs;
+	int (*init)(struct efpm_s *this);
+	int (*run)(struct efpm_s *this);
+	int (*clean)(struct efpm_s *this);
+};
+
+// parent
+int efpm_init(struct efpm_s *this);
+int efpm_run(struct efpm_s *this);
+int efpm_clean(struct efpm_s *this);
+
+// child
+int efpm_child_init(struct efpm_child_s *this);
+int efpm_child_run(struct efpm_child_s *this);
+int efpm_child_clean(struct efpm_child_s *this);
+
+struct efpm_s *new_efpm(int workers, int reuseport);
+void del_efpm(struct efpm_s *efpm);
+int efpm_socket(int port);
 
 struct efpm_globals_s {
 	pid_t parent_pid;
-	int argc;
-	char **argv;
-	char *config;
-	char *prefix;
-	char *pid;
-	int running_children;
-	int error_log_fd;
-	int log_level;
-	int listening_socket; /* for this child */
-	int max_requests; /* for this child */
+	int *listening_socket; /* for this child */
 	int is_child;
-	int test_successful;
-	int heartbeat;
-	int run_as_root;
-	int force_stderr;
-	int send_config_pipe[2];
+	int child_num;
+	int w_fd; 
 };
 
 extern struct efpm_globals_s efpm_globals;
