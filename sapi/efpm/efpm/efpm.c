@@ -33,7 +33,7 @@ enum efpm_init_return_status efpm_init(int argc, char **argv)
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY; // 0.0.0.0
-    server_addr.sin_port = htons(8000);
+    server_addr.sin_port = htons(9000);
 
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);

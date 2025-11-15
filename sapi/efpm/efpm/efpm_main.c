@@ -64,6 +64,8 @@ sudo apt install make autoconf gcc cmake pkg-config flex bison re2c libxml2-dev 
 
 ./buildconf —force
 ./configure --enable-debug --disable-cgi --enable-efpm --disable-fpm --disable-phpdbg
+
+./configure --enable-debug --disable-cgi --enable-fpm --disable-phpdbg
 ./config.nice
 make -j $(nproc)
 sudo make install
@@ -465,19 +467,19 @@ static void fcgi_log(int type, const char *format, ...) {
 */
 
 static const char HARDCODED_INI[] =
-"html_errors=0\nregister_argc_argv=1\nimplicit_flush=1\noutput_buffering=0\n"
+"html_errors=0\nregister_argc_argv=0\nimplicit_flush=1\noutput_buffering=0\n"
 "max_execution_time=0\n";
 
 void efpm_request_accepting() {
-    printf("accept\n");
+    // printf("accept\n");
 }
 
 void efpm_request_reading_headers() {
-    printf("reading header\n");
+    // printf("reading header\n");
 }
 
 void efpm_request_finished() {
-    printf("request finished\n");
+    // printf("request finished\n");
 }
 
 #define EFPM_PHP_INI_ALTERING_ERROR   -1
@@ -1057,9 +1059,10 @@ static fcgi_request *efpm_init_request(int listen_fd) {
 
 /* {{{ main */
 int main(int argc, char **argv) {
-    PHPWRITE("Hello1\n", 7);
+    printf("starting PHP-EFPM\n");
     int exit_status = EFPM_EXIT_OK;
     zend_file_handle file_handle;
+    zend_signal_startup();
     sapi_startup(&cgi_sapi_module); // php_module_startup 포함됨.
 
 #ifndef HAVE_ATTRIBUTE_WEAK
@@ -1085,7 +1088,7 @@ int main(int argc, char **argv) {
     fcgi_request *request = efpm_init_request(fcgi_fd);
 
     fpm_is_running = 1;
-    // parent = 0; // for child 
+    parent = 0; // for child 
 
     // request loop
     for(;;){
@@ -1120,10 +1123,20 @@ int main(int argc, char **argv) {
 
         // memory leak
         efree(primary_script);
+        efree(SG(request_info).path_translated);
+        if(!file_handle.in_list){
+            zend_destroy_file_handle(&file_handle);
+        }
+
+        if(request_body_fd != -1){
+            close(request_body_fd);
+        }
 
         request_body_fd = -2;
 
-        efree(SG(request_info).path_translated);
+        if(EG(exit_status) == 255){
+            printf("failed to exe\n");
+        }
 
         SG(request_info).path_translated = NULL;
         php_request_shutdown((void *)0);

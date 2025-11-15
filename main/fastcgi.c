@@ -1472,7 +1472,7 @@ int fcgi_accept_request(fcgi_request *req)
 			return -1;
 		}
 		req->hook.on_read();
-		int read_result = fcgi_read_request(req); // 여기서 return 0되네
+		int read_result = fcgi_read_request(req);
 		if (read_result == 1) {
 #ifdef _WIN32
 			if (is_impersonate && !req->tcp) {
