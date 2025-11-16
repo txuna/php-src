@@ -165,8 +165,8 @@ int efpm_run(struct efpm_s *this) {
         return FAILURE;
     }
 
-    struct efpm_event_s *ev2 = efpm_event_set(sfd, &catch_signal, this);
-    (*this->event_module->add)(this->event_module, ev2);
+    struct efpm_event_s *ev = efpm_event_set(sfd, &catch_signal, this);
+    (*this->event_module->add)(this->event_module, ev);
 
     // wait
     int ret = (*this->event_module->wait)(this->event_module);

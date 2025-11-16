@@ -91,7 +91,7 @@ int efpm_php_apply_defines_ex(struct key_value_s *kv, int mode);
 static int is_valid_path(const char *path);
 static void fastcgi_ini_parser(zval *arg1, zval *arg2, zval *arg3, int callback_type, void *arg);
 static void init_request_info(void);
-static fcgi_request *efpm_init_request(int listen_fd);
+// static fcgi_request *efpm_init_request(int listen_fd);
 
 typedef struct _php_cgi_globals_struct {
 	bool rfc2616_headers;

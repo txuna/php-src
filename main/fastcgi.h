@@ -100,6 +100,10 @@ const char *fcgi_get_last_client_ip(void);
 void fcgi_set_in_shutdown(int new_value);
 void fcgi_request_set_keep(fcgi_request *req, int new_value);
 
+// custom functions
+int fcgi_get_fd(fcgi_request *req);
+int fcgi_get_listenfd(fcgi_request *req);
+
 #ifndef HAVE_ATTRIBUTE_WEAK
 typedef void (*fcgi_logger)(int type, const char *fmt, ...) ZEND_ATTRIBUTE_FORMAT(printf, 2, 3);
 void fcgi_set_logger(fcgi_logger lg);
