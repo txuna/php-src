@@ -19,6 +19,7 @@
 #include "efpm.h"
 #include "php_main.h"
 
+extern struct efpm_child_s *child_g;
 
 struct efpm_s *new_efpm(int workers, int reuseport) {
     struct efpm_s *efpm = (struct efpm_s *)malloc(sizeof(struct efpm_s));
@@ -34,13 +35,6 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
     efpm->childs = (struct efpm_child_s **)malloc(sizeof(struct efpm_child_s*) * workers);
     if(!efpm->childs) {
         return NULL;
-    }
-
-    for(int i=0; i<workers; i++){
-        efpm->childs[i] = new_efpm_child(i);
-        if(!efpm->childs[i]) {
-            return NULL;
-        }
     }
 
     efpm->port = 9000;
@@ -71,6 +65,14 @@ int efpm_init(struct efpm_s *this) {
     this->listening_socket = sock;
     (*this->event_module->init)(this->event_module);
 
+    // child
+    for(int i=0; i<this->worker; i++){
+        this->childs[i] = new_efpm_child(i, sock);
+        if(!this->childs[i]) {
+            return FAILURE;
+        }
+    }
+
     // eventfd 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if(efd == -1){
@@ -91,7 +93,7 @@ void catch_signal(struct efpm_event_s *ev, void *arg) {
     
     struct signalfd_siginfo si;
     uint64_t v = DO_SHUTDOWN;
-    ssize_t n = read(ev->fd, &si, sizeof(si));
+    read(ev->fd, &si, sizeof(si));
     printf("catch signal: %d from: %d\n", si.ssi_signo, si.ssi_pid);
 
     for(int i=0; i<this->worker; i++){
@@ -133,6 +135,7 @@ int efpm_run(struct efpm_s *this) {
         child = this->childs[i];
         pid_t pid = fork();
         if(pid == 0) {
+            // child
             goto child;
         } else if(pid < 0){
             // error
@@ -174,6 +177,8 @@ int efpm_run(struct efpm_s *this) {
     return (*this->clean)(this);
 
 child:
+    child_g = child;
+    (*child->init)(child);
     return (*child->run)(child);
 }
 

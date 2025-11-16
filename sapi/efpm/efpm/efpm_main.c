@@ -1068,14 +1068,14 @@ static void init_request_info(void)
 /* }}} */
 
 // 없으면 dummy
-static fcgi_request *efpm_init_request(int listen_fd) {
-    fcgi_request *req = fcgi_init_request(listen_fd,
-        efpm_request_accepting,   /* on_accept */
-        efpm_request_reading_headers,   /* on_read */
-        efpm_request_finished); /* on_close */
+// static fcgi_request *efpm_init_request(int listen_fd) {
+//     fcgi_request *req = fcgi_init_request(listen_fd,
+//         efpm_request_accepting,   /* on_accept */
+//         efpm_request_reading_headers,   /* on_read */
+//         efpm_request_finished); /* on_close */
 
-    return req;
-}
+//     return req;
+// }
 
 /* {{{ main */
 int main(int argc, char **argv) {
@@ -1115,6 +1115,7 @@ int main(int argc, char **argv) {
 
 	return EFPM_EXIT_SOFTWARE;
 	// TODO
+	/*
     int fcgi_fd = efpm_globals.listening_socket[efpm_globals.child_num];
     fcgi_request *request = efpm_init_request(fcgi_fd);
 
@@ -1183,5 +1184,6 @@ int main(int argc, char **argv) {
 	}
 
     return 0;
+	*/
 }
 /* }}} */

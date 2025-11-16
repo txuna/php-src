@@ -27,6 +27,7 @@ struct efpm_child_s {
 	pid_t pid;
 	pid_t parent_pid;
 	int child_num;
+	int fcgi_fd;
 	struct efpm_event_module_s *event_module;
 
 	int (*init)(struct efpm_child_s *this);
@@ -62,7 +63,7 @@ int efpm_child_init(struct efpm_child_s *this);
 int efpm_child_run(struct efpm_child_s *this);
 int efpm_child_clean(struct efpm_child_s *this);
 
-struct efpm_child_s *new_efpm_child(int cn);
+struct efpm_child_s *new_efpm_child(int child_num, int sock);
 struct efpm_s *new_efpm(int workers, int reuseport);
 void del_efpm(struct efpm_s *efpm);
 int efpm_socket(int port);

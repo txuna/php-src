@@ -3,7 +3,8 @@
 
 #include "efpm_event.h"
 
-void worker_sig_handle(struct efpm_event_s *ev);
-void worker_callback(struct efpm_event_s *ev);
+void efpm_child_request_accepting();
+void efpm_child_request_reading_headers();
+void efpm_child_request_finished();
 
 #endif
