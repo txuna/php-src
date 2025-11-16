@@ -1100,7 +1100,7 @@ int main(int argc, char **argv) {
         return EFPM_EXIT_SOFTWARE;
     }
 
-	struct efpm_s *efpm = new_efpm(5, true);
+	struct efpm_s *efpm = new_efpm(1, true);
 	if(!efpm){
 		return EFPM_EXIT_SOFTWARE;
 	}
@@ -1109,12 +1109,9 @@ int main(int argc, char **argv) {
 		return EFPM_EXIT_SOFTWARE;
 	}
 
-	// if((*efpm->run)(efpm) == FAILURE) {
-	// 	return EFPM_EXIT_SOFTWARE;
-	// }
-
-	// sleep(5);
-	del_efpm(efpm);
+	if((*efpm->run)(efpm) == FAILURE) {
+		return EFPM_EXIT_SOFTWARE;
+	}
 
 	return EFPM_EXIT_SOFTWARE;
 	// TODO

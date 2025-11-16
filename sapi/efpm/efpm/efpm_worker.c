@@ -34,34 +34,14 @@ int efpm_child_init(struct efpm_child_s *this){
 }
 
 int efpm_child_run(struct efpm_child_s *this){
-    printf("I AM CHILD: %d\n", this->child_num);
-    sleep(1);
-
+    while(1){
+        sleep(1);
+    }
     return SUCCESS;
 }
 
 int efpm_child_clean(struct efpm_child_s *this){
+    (*this->event_module->clean)(this->event_module);
     free(this->event_module);
     return SUCCESS;
 }
-
-// void worker_sig_handle(struct efpm_event_s *ev) {
-//     int status = 0;
-//     while(1){
-//         pid_t pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
-//         if(pid < 0) {
-//             printf("waitpid(): %d\n", errno);
-//             return;
-//         }
-
-//         if(pid == 0){
-//             return;
-//         }
-
-//         if (WIFEXITED(status)) {
-//             printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));
-//         } else if (WIFSIGNALED(status)) {
-//             printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
-//         }
-//    }
-// }

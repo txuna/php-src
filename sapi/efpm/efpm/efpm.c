@@ -7,6 +7,11 @@
 #include <sys/timerfd.h>
 #include <time.h>
 #include <errno.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <sys/eventfd.h>
+#include <sys/signalfd.h>
+
 #include "zend.h"
 
 #include "efpm_event.h"
@@ -14,7 +19,6 @@
 #include "efpm.h"
 #include "php_main.h"
 
-int child_num = 0;
 
 struct efpm_s *new_efpm(int workers, int reuseport) {
     struct efpm_s *efpm = (struct efpm_s *)malloc(sizeof(struct efpm_s));
@@ -67,47 +71,110 @@ int efpm_init(struct efpm_s *this) {
     this->listening_socket = sock;
     (*this->event_module->init)(this->event_module);
 
-    int tfd = new_timerfd(1, 0);
-    if(tfd == FAILURE){
+    // eventfd 
+    int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if(efd == -1){
         return FAILURE;
     }
 
-    struct efpm_event_s *ev = efpm_event_set(tfd, &is_dead_child, this);
+    this->event_module->efd = efd;
+    this->efd = efd;
+
+    struct efpm_event_s *ev = efpm_event_set(efd, &efpm_signal_dead, this);
     (*this->event_module->add)(this->event_module, ev);
 
     return SUCCESS;
 }
 
-void is_dead_child(struct efpm_event_s *ev, void *arg) {
+void catch_signal(struct efpm_event_s *ev, void *arg) {
+    struct efpm_s *this = (struct efpm_s *)arg;
+    
+    struct signalfd_siginfo si;
+    uint64_t v = DO_SHUTDOWN;
+    ssize_t n = read(ev->fd, &si, sizeof(si));
+    printf("catch signal: %d from: %d\n", si.ssi_signo, si.ssi_pid);
+
+    for(int i=0; i<this->worker; i++){
+        struct efpm_child_s *child = this->childs[i];
+        if(si.ssi_pid == child->pid){
+            v = DO_CHILD;
+        }
+    }
+
+    write(this->efd, &v, sizeof(v));
+}
+
+void efpm_signal_dead(struct efpm_event_s *ev, void *arg) {
     struct efpm_s *this = (struct efpm_s *)arg;
 
-    uint64_t expirations;
-    read(ev->fd, &expirations, sizeof(expirations)); 
-    printf("hello i am parent: %d-%ld\n", this->worker, expirations);
+    int status = 0;
+    while(1){
+        pid_t pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
+        if(pid < 0){
+            return;
+        }
+
+        if(pid == 0){
+            return;
+        }
+
+        // 재부활 로직 추가 필요
+        if (WIFEXITED(status)) {
+            printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
+        }
+    }
 }
 
 int efpm_run(struct efpm_s *this) {
-    return (*this->event_module->wait)(this->event_module);
-//     for(int i=0; i<this->worker; i++){
-//         pid_t pid = fork();
-//         if(pid == 0) {
-//             child_num = i;
-//             goto child;
+    struct efpm_child_s *child;
+    for(int i=0; i<this->worker; i++){
+        child = this->childs[i];
+        pid_t pid = fork();
+        if(pid == 0) {
+            goto child;
+        } else if(pid < 0){
+            // error
+        } else {
+            // parent
+            child->pid = pid;
+        }
+    }
 
-//         } else if(pid < 0){
-//             // error
-//         } else {
-//             // parent
-//         }
-//     }
+    // 시그널 감지 추가
+    sigset_t mask;
+    int sfd; 
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);   // Ctrl+C
+    sigaddset(&mask, SIGTERM);  // kill -TERM
+    sigaddset(&mask, SIGCHLD);
+    sigaddset(&mask, SIGPIPE);
 
-// parent:
-//     // wait
-//     return SUCCESS;
+    if (sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
+        printf("sigprocmask(): %d\n", errno);
+        return FAILURE;
+    }
 
-// child:
-//     struct efpm_child_s *child = (*this->get_child)(this, child_num);
-//     return (*child->run)(child);
+    sfd = signalfd(-1, &mask, SFD_CLOEXEC); 
+    if(sfd == -1){
+        printf("signalfd(): %d\n", errno);
+        return FAILURE;
+    }
+
+    struct efpm_event_s *ev2 = efpm_event_set(sfd, &catch_signal, this);
+    (*this->event_module->add)(this->event_module, ev2);
+
+    // wait
+    int ret = (*this->event_module->wait)(this->event_module);
+    if(ret == FAILURE){
+        return FAILURE;
+    }
+
+    return (*this->clean)(this);
+
+child:
+    return (*child->run)(child);
 }
 
 struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn) {
@@ -125,20 +192,24 @@ int efpm_clean(struct efpm_s *this){
         return SUCCESS;
     }
 
+    // 자식 프로세스 정리
     for(int i=0;i<this->worker;i++){
         struct efpm_child_s *child = this->childs[i];
         if(!child){
             continue;
         }
 
-        (*child->clean)(child);
+        kill(child->pid, SIGTERM);
         free(this->childs[i]);
     }
 
     // 이벤트 모듈 정리
     (*this->event_module->clean)(this->event_module);
 
+    free(this->event_module);
     free(this->childs);
+    close(this->listening_socket);
+
     return SUCCESS;
 }
 
@@ -154,11 +225,6 @@ int efpm_socket(int port) {
         printf("socket: %d\n", errno);
         return FAILURE;
     }
-
-    // if(setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &flags, sizeof(flags)) < 0){
-    //     printf("setsockopt: %d\n", errno);
-    //     return FAILURE;
-    // }
 
     if(setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &flags, sizeof(flags)) < 0) {
         printf("setsockopt: %d\n", errno);
@@ -177,112 +243,3 @@ int efpm_socket(int port) {
 
     return sock;
 }
-
-/*
-int efpm_network_init(int workers, int port, bool reuseport) {
-    efpm_globals.listening_socket = malloc(sizeof(int) * workers);
-    if(efpm_globals.listening_socket == NULL) {
-        return FAILURE;
-    }
-
-    int sock;
-    bool oneshot = false;
-    for(int i=0;i<workers;i++) {
-        if(!oneshot){
-            sock = efpm_socket(port, reuseport);
-            if(sock == FAILURE){
-                return FAILURE;
-            }
-        }
-
-        efpm_globals.listening_socket[i] = sock;
-        if(!reuseport){
-            oneshot = true;
-        }
-    }
-
-    return SUCCESS;
-}
-
-void efpm_network_shutdown() {
-    free(efpm_globals.listening_socket);
-}
-
-int efpm_worker_new(int n) {
-    int p2c[2];
-    pipe(p2c);
-    pid_t pid = fork(); 
-    if(pid == 0) {
-        // child
-        php_child_init();
-        efpm_globals.is_child = 1;
-        efpm_globals.child_num = n;
-        efpm_globals.w_fd = p2c[WRITE_SP];
-        if(prctl(PR_SET_NAME, "my-child-process") < 0){
-            printf("failed to prctl\n");
-        }
-        close(p2c[READ_SP]);
-        return 0;
-    } else if(pid < 0) {
-        return -1;
-    }
-    
-    // parent 
-    close(p2c[WRITE_SP]);
-    struct efpm_event_s *ev = malloc(sizeof(struct efpm_event_s));
-    efpm_event_set(ev, p2c[READ_SP], &worker_callback, NULL);
-    efpm_event_module.add(ev);
-
-    return 1;
-}
-
-enum efpm_init_return_status efpm_init(int workers) { 
-    if(efpm_network_init(workers, 9000, true) == FAILURE) {
-        return EFPM_INIT_ERROR;
-    }
-
-    if(efpm_event_module.init(512) == FAILURE) {
-        return EFPM_INIT_ERROR;
-    }
-
-    return EFPM_INIT_CONTINUE;
-}
-
-int efpm_run(int workers) {
-    for(int i=0;i<workers;i++){
-        int is_parent = efpm_worker_new(i);
-        if(is_parent == -1){
-            printf("failed to fork\n");
-            return FAILURE;
-        }
-
-        if(!is_parent){
-            return SUCCESS;
-        }
-
-        //p2c[READ_SP] event 등록 - child process는 signal 탐지시 WRITE_SP로 전송
-        // 부모는 수집후 waitpid로 자식 제거 및 대기
-    }
-
-    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
-    if (tfd < 0) { perror("timerfd_create"); exit(1); }
-
-    // 1초 후에 첫 발사, 그 이후 1초마다 반복
-    struct itimerspec its;
-    its.it_value.tv_sec = 1;
-    its.it_value.tv_nsec = 0;
-    its.it_interval.tv_sec = 1;     // 주기
-    its.it_interval.tv_nsec = 0;
-
-    if (timerfd_settime(tfd, 0, &its, NULL) < 0) {
-        perror("timerfd_settime");
-        exit(1);
-    }
-    
-    struct efpm_event_s *ev = malloc(sizeof(struct efpm_event_s));
-    efpm_event_set(ev, tfd, &worker_sig_handle, NULL);
-    efpm_event_module.add(ev);
-
-    return efpm_event_module.wait();
-}  
-*/

@@ -189,7 +189,12 @@ int efpm_event_remove(struct efpm_event_module_s *this, struct efpm_event_s *ev)
 
 int efpm_event_wait(struct efpm_event_module_s *this) {
     int timeout = -1;
+    bool be_shutdown = false;
     while(1) {
+        if(be_shutdown){
+            return SUCCESS;
+        }
+
         memset(this->epollfds, 0, sizeof(struct epoll_event) * this->nepollfds);
         int ret = epoll_wait(this->epollfd, this->epollfds, this->nepollfds, timeout);
         if(ret == -1){
@@ -205,6 +210,15 @@ int efpm_event_wait(struct efpm_event_module_s *this) {
             }
 
             struct efpm_event_s *ev = (struct efpm_event_s *)this->epollfds[i].data.ptr;
+            if(ev->fd == this->efd){
+                uint64_t cnt;
+                read(this->efd, &cnt, sizeof(cnt));
+                if(cnt == DO_SHUTDOWN) {
+                    be_shutdown = true;
+                    continue;
+                }
+            }
+
             (*this->fire)(this, ev);
         }
     }

@@ -10,6 +10,9 @@
 
 #define EFPM_EXIT_CONFIG 78
 
+#define DO_SHUTDOWN 1
+#define DO_CHILD 2
+
 enum efpm_init_return_status {
 	EFPM_INIT_ERROR,
 	EFPM_INIT_CONTINUE,
@@ -36,6 +39,7 @@ struct efpm_s {
 	int reuseport; 
 	int listening_socket;
 	int port;
+	int efd;
 
 	struct efpm_event_module_s *event_module;
 	struct efpm_child_s **childs;
@@ -50,7 +54,8 @@ int efpm_init(struct efpm_s *this);
 int efpm_run(struct efpm_s *this);
 int efpm_clean(struct efpm_s *this);
 struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn);
-void is_dead_child(struct efpm_event_s *ev, void *arg);
+void efpm_signal_dead(struct efpm_event_s *ev, void *arg);
+void catch_signal(struct efpm_event_s *ev, void *arg);
 
 // child
 int efpm_child_init(struct efpm_child_s *this);

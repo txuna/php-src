@@ -17,6 +17,7 @@ struct efpm_event_queue_s {
 
 struct efpm_event_module_s {
     const char *name;
+    int efd; 
     int epollfd;
     int nepollfds; 
     struct epoll_event *epollfds;
