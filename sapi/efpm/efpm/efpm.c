@@ -14,15 +14,7 @@
 #include "efpm.h"
 #include "php_main.h"
 
-#define WRITE_SP 1
-#define READ_SP 0
-
-struct efpm_globals_s efpm_globals = {
-	.parent_pid = 0,
-	.listening_socket = 0,
-	.is_child = 0,
-    .child_num = 0,
-};
+int child_num = 0;
 
 struct efpm_s *new_efpm(int workers, int reuseport) {
     struct efpm_s *efpm = (struct efpm_s *)malloc(sizeof(struct efpm_s));
@@ -30,10 +22,21 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
         return NULL;
     }
 
-    efpm->childs = (struct efpm_child_s *)malloc(sizeof(struct efpm_child_s) * workers);
-    if(!efpm->childs) {
-        free(efpm);
+    efpm->event_module = new_event_module(EVENT_SIZE);
+    if(!efpm->event_module) {
         return NULL;
+    }
+
+    efpm->childs = (struct efpm_child_s **)malloc(sizeof(struct efpm_child_s*) * workers);
+    if(!efpm->childs) {
+        return NULL;
+    }
+
+    for(int i=0; i<workers; i++){
+        efpm->childs[i] = new_efpm_child(i);
+        if(!efpm->childs[i]) {
+            return NULL;
+        }
     }
 
     efpm->port = 9000;
@@ -42,6 +45,7 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
     efpm->init = efpm_init;
     efpm->run = efpm_run;
     efpm->clean = efpm_clean;
+    efpm->get_child = efpm_get_child;
 }
 
 void del_efpm(struct efpm_s *efpm) {
@@ -61,13 +65,59 @@ int efpm_init(struct efpm_s *this) {
     }
 
     this->listening_socket = sock;
+    (*this->event_module->init)(this->event_module);
 
-    // ceate event module
+    int tfd = new_timerfd(1, 0);
+    if(tfd == FAILURE){
+        return FAILURE;
+    }
+
+    struct efpm_event_s *ev = efpm_event_set(tfd, &is_dead_child, this);
+    (*this->event_module->add)(this->event_module, ev);
+
     return SUCCESS;
 }
 
+void is_dead_child(struct efpm_event_s *ev, void *arg) {
+    struct efpm_s *this = (struct efpm_s *)arg;
+
+    uint64_t expirations;
+    read(ev->fd, &expirations, sizeof(expirations)); 
+    printf("hello i am parent: %d-%ld\n", this->worker, expirations);
+}
+
 int efpm_run(struct efpm_s *this) {
-    return SUCCESS;
+    return (*this->event_module->wait)(this->event_module);
+//     for(int i=0; i<this->worker; i++){
+//         pid_t pid = fork();
+//         if(pid == 0) {
+//             child_num = i;
+//             goto child;
+
+//         } else if(pid < 0){
+//             // error
+//         } else {
+//             // parent
+//         }
+//     }
+
+// parent:
+//     // wait
+//     return SUCCESS;
+
+// child:
+//     struct efpm_child_s *child = (*this->get_child)(this, child_num);
+//     return (*child->run)(child);
+}
+
+struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn) {
+    for(int i=0; i<this->worker; i++){
+        if(i==cn){
+            return this->childs[i];
+        }
+    }
+
+    return NULL;
 }
 
 int efpm_clean(struct efpm_s *this){
@@ -76,13 +126,17 @@ int efpm_clean(struct efpm_s *this){
     }
 
     for(int i=0;i<this->worker;i++){
-        struct efpm_child_s *child = &this->childs[i];
+        struct efpm_child_s *child = this->childs[i];
         if(!child){
             continue;
         }
 
         (*child->clean)(child);
+        free(this->childs[i]);
     }
+
+    // 이벤트 모듈 정리
+    (*this->event_module->clean)(this->event_module);
 
     free(this->childs);
     return SUCCESS;

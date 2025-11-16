@@ -1109,9 +1109,12 @@ int main(int argc, char **argv) {
 		return EFPM_EXIT_SOFTWARE;
 	}
 
-	if((*efpm->run)(efpm) == FAILURE) {
-		return EFPM_EXIT_SOFTWARE;
-	}
+	// if((*efpm->run)(efpm) == FAILURE) {
+	// 	return EFPM_EXIT_SOFTWARE;
+	// }
+
+	// sleep(5);
+	del_efpm(efpm);
 
 	return EFPM_EXIT_SOFTWARE;
 	// TODO
@@ -1121,7 +1124,7 @@ int main(int argc, char **argv) {
     fpm_is_running = 1;
     parent = 0; // for child 
 
-    // request loop
+    // request loop - for child->run()으로 변경하기
     for(;;){
 		// eventLoop wait
         if(fcgi_accept_request(request) < 0){
