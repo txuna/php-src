@@ -89,34 +89,42 @@ int efpm_child_init(struct efpm_child_s *this){
     return SUCCESS;
 }
 
-int efpm_child_run(struct efpm_child_s *this){
-    fcgi_request *request = efpm_init_request(this->fcgi_fd);
-    printf("fd: %d\n",fcgi_get_listenfd(request));
-    struct efpm_event_s *ev = efpm_event_set(fcgi_get_listenfd(request), &efpm_child_fire, request);
-    (*this->event_module->add)(this->event_module, ev);
-
-    // for(;;){
-    //     if(fcgi_accept_request(request) < 0){
-    //         printf("failed to accept request\n");
-    //         continue;
-    //     }
-
-    //     printf("HEELLO?\n");
-    // }
-    return (*this->event_module->wait)(this->event_module);
-}
-
 /*
     new API for fastcgi
     1. fcgi_get_fd(fcgi_request *request);
     2. fcgi_get_listenfd(fcgi_request* request);
+    3. fcgi_accept_request2(fcgi_request* request);
 */
-void efpm_child_fire(struct efpm_event_s *ev, void *arg) {
-    struct efpm_child_s *this = child_g;
-    fcgi_request *request = (fcgi_request*)arg;
+int efpm_child_run(struct efpm_child_s *this){
+    // fcgi_request *request = efpm_init_request(this->fcgi_fd);
+    // struct efpm_event_s *ev = efpm_event_set(fcgi_get_listenfd(request), &efpm_child_fire, request);
+    
+    struct efpm_event_s *ev = efpm_event_set(this->fcgi_fd, &efpm_child_new_connection, this);
+    (*this->event_module->add)(this->event_module, ev);
 
-    printf("FIRE\n");
-    fcgi_accept_request(request);
+    return (*this->event_module->wait)(this->event_module);
+}
+
+void efpm_child_new_connection(struct efpm_event_s *ev, void *arg) {
+    struct sockaddr_in sa;
+    unsigned int len = sizeof(sa);
+    struct efpm_child_s *this = (struct efpm_child_s *)arg;
+
+    int client_fd = accept(this->fcgi_fd, (struct sockaddr *)&sa, &len);
+    
+    printf("new client: %d\n", client_fd);
+    fcgi_request *request = efpm_init_request(this->fcgi_fd);
+
+    struct efpm_event_s *ev2 = efpm_event_set(client_fd, &efpm_child_handle_connection, this);
+    (*this->event_module->add)(this->event_module, ev2);
+}
+
+void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
+    struct efpm_child_s *this = child_g;
+    fcgi_request *request = (fcgi_request *)arg;
+
+    // printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request));
+    
 }
 
 int efpm_child_clean(struct efpm_child_s *this){

@@ -103,6 +103,7 @@ void fcgi_request_set_keep(fcgi_request *req, int new_value);
 // custom functions
 int fcgi_get_fd(fcgi_request *req);
 int fcgi_get_listenfd(fcgi_request *req);
+int fcgi_accept_request2(fcgi_request *req);
 
 #ifndef HAVE_ATTRIBUTE_WEAK
 typedef void (*fcgi_logger)(int type, const char *fmt, ...) ZEND_ATTRIBUTE_FORMAT(printf, 2, 3);

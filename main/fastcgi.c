@@ -1356,6 +1356,12 @@ static int fcgi_is_allowed(void) {
 	return 0;
 }
 
+// client fd리턴
+int fcgi_accept_request2(fcgi_request *req)
+{
+	// if(req->fd < 0)
+}
+
 // on read로 하나 만들자
 // server socket read - fcgi_accept_request 
 // client socket read - fcgi_read_request

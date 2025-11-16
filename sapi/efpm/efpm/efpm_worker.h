@@ -6,6 +6,7 @@
 void efpm_child_request_accepting();
 void efpm_child_request_reading_headers();
 void efpm_child_request_finished();
-void efpm_child_fire(struct efpm_event_s *ev, void *arg);
+void efpm_child_new_connection(struct efpm_event_s *ev, void *arg);
+void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg);
 
 #endif
