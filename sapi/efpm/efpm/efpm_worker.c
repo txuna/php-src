@@ -94,6 +94,9 @@ int efpm_child_init(struct efpm_child_s *this){
     1. fcgi_get_fd(fcgi_request *request);
     2. fcgi_get_listenfd(fcgi_request* request);
     3. fcgi_accept_request2(fcgi_request* request);
+    4. int fcgi_set_fd(fcgi_request *req, int fd);
+    5. int fcgi_process_request(fcgi_request *req);
+    6. int get_peer_addr(int fd, struct sockaddr_in *addr);
 */
 int efpm_child_run(struct efpm_child_s *this){
     // fcgi_request *request = efpm_init_request(this->fcgi_fd);
@@ -110,21 +113,29 @@ void efpm_child_new_connection(struct efpm_event_s *ev, void *arg) {
     unsigned int len = sizeof(sa);
     struct efpm_child_s *this = (struct efpm_child_s *)arg;
 
-    int client_fd = accept(this->fcgi_fd, (struct sockaddr *)&sa, &len);
-    
-    printf("new client: %d\n", client_fd);
     fcgi_request *request = efpm_init_request(this->fcgi_fd);
+    // int client_fd = accept(this->fcgi_fd, (struct sockaddr *)&sa, &len);
+    int client_fd = fcgi_accept_request2(request);
+    if(client_fd == -1){
+        printf("failed to fcgi_accept_requsest2()\n");
+        return;
+    }
 
-    struct efpm_event_s *ev2 = efpm_event_set(client_fd, &efpm_child_handle_connection, this);
+    struct efpm_event_s *ev2 = efpm_event_set(client_fd, &efpm_child_handle_connection, request);
     (*this->event_module->add)(this->event_module, ev2);
 }
 
+// 음 일단 초기버전은 클라이언트 요청을 무조건 다 처리하고 다음 콜백으로 넘어가야할듯 SAPI가 프로세스당으로 되어있어서 곤란함. - level trigger로 끝내야함.
+// 추후 ZTS(Zend Thread Safe TSRM) 리서치
 void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
     struct efpm_child_s *this = child_g;
     fcgi_request *request = (fcgi_request *)arg;
+    struct sockaddr_in sa;
 
-    // printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request));
-    
+    printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request)); 
+    sa = fcgi_get_sockaddr(request);
+    // 원래는 fcgi_accept_requst()
+
 }
 
 int efpm_child_clean(struct efpm_child_s *this){

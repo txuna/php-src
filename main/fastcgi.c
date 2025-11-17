@@ -242,6 +242,7 @@ typedef union _sa_t {
 
 static HashTable fcgi_mgmt_vars;
 
+// 이런 전역변수들 처리해야함. 같은 프로세스내 여러 클라이언트를 처리할 것이니!!!.>!!
 static int is_initialized = 0;
 static int is_fastcgi = 0;
 static int in_shutdown = 0;
@@ -875,6 +876,10 @@ int fcgi_get_fd(fcgi_request *req) {
 	return req->fd;
 }
 
+int fcgi_set_fd(fcgi_request *req, int fd) {
+	req->fd = fd;
+}
+
 fcgi_request *fcgi_init_request(int listen_socket, void(*on_accept)(void), void(*on_read)(void), void(*on_close)(void))
 {
 	fcgi_request *req = calloc(1, sizeof(fcgi_request));
@@ -1356,10 +1361,55 @@ static int fcgi_is_allowed(void) {
 	return 0;
 }
 
-// client fd리턴
+int get_peer_addr(int fd, struct sockaddr_in *addr) {
+    socklen_t len = sizeof(*addr);
+    memset(addr, 0, len);
+
+    if (getpeername(fd, (struct sockaddr*)addr, &len) < 0) {
+        perror("getpeername");
+        return -1;
+    }
+    return 0;
+}
+
+struct sockaddr_in fcgi_get_sockaddr(fcgi_request *req)
+{
+	struct sockaddr_in peer;
+	get_peer_addr(fd, &peer);
+
+	return peer;
+}
+
 int fcgi_accept_request2(fcgi_request *req)
 {
-	// if(req->fd < 0)
+	if(in_shutdown) {
+		return -1;
+	}
+
+	req->hook.on_accept();
+
+	sa_t sa;
+	socklen_t len = sizeof(sa);
+	req->fd = accept(req->listen_socket, (struct sockaddr*)&sa, &len);
+
+	// pthread 돌릴시 변경 필요함. 그냥 지금 빼버리고 커스텀하게 가는게 좋을듯
+	if(req->fd >= 0 && lient_sa.sa.sa_family != AF_INET) {
+		closesocket(req->fd);
+		req->fd = -1;
+		return -1;
+	}
+
+	return req->fd;
+}
+
+// req->fd 세팅된 상태임ㅇ
+int fcgi_process_request(fcgi_request *req)
+{	
+	if(in_shutdown) {
+		return -1;
+	}
+
+	return 0;
 }
 
 // on read로 하나 만들자
