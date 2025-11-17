@@ -1399,7 +1399,7 @@ int fcgi_accept_request2(fcgi_request *req)
 	if(sa.sin_family != AF_INET) {
 		closesocket(req->fd);
 		req->fd = -1;
-		return -1;p
+		return -1;
 	}
 
 	return req->fd;

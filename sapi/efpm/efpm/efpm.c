@@ -57,7 +57,6 @@ void del_efpm(struct efpm_s *efpm) {
         return;
     }
 
-    (*efpm->clean)(efpm);
     free(efpm);
 }
 
@@ -94,21 +93,31 @@ int efpm_init(struct efpm_s *this) {
     return SUCCESS;
 }
 
+
+// @@ TODO 수정 필요
 void catch_signal(struct efpm_event_s *ev, void *arg) {
     struct efpm_s *this = (struct efpm_s *)arg;
-    
+    if(!efpm_parent) {
+        return;
+    }
+
     struct signalfd_siginfo si;
     uint64_t v = DO_SHUTDOWN;
     read(ev->fd, &si, sizeof(si));
-    printf("catch signal: %d from: %d\n", si.ssi_signo, si.ssi_pid);
+    if(si.ssi_pid == 0){
+        this->shutdown_sig = true;
+        goto out;
+    }
 
     for(int i=0; i<this->worker; i++){
         struct efpm_child_s *child = this->childs[i];
         if(si.ssi_pid == child->pid){
             v = DO_CHILD;
+            break;
         }
     }
 
+out:
     write(this->efd, &v, sizeof(v));
 }
 

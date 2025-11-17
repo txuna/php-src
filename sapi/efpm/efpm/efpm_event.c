@@ -212,10 +212,15 @@ int efpm_event_wait(struct efpm_event_module_s *this) {
             struct efpm_event_s *ev = (struct efpm_event_s *)this->epollfds[i].data.ptr;
             if(ev->fd == this->efd){
                 uint64_t cnt;
-                read(this->efd, &cnt, sizeof(cnt));
-                if(cnt == DO_SHUTDOWN) {
-                    be_shutdown = true;
-                    continue;
+                while(1){
+                    int n = read(this->efd, &cnt, sizeof(cnt));
+                    if(n <= 0) {
+                        break;
+                    }
+                    if(cnt == DO_SHUTDOWN) {
+                        be_shutdown = true;
+                        break;
+                    }
                 }
             }
 

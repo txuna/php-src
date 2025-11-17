@@ -1077,9 +1077,9 @@ void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
 	zend_file_handle file_handle;
 	int exit_status = EFPM_EXIT_OK;
 	int clnt_fd = fcgi_get_fd(request);
-    // printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request)); 
+
     sa = fcgi_get_sockaddr(request);
-	printf("req from IP: %s, FD: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request));
+	// printf("req from IP: %s, FD: %d, PID: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request), getpid());
     // 원래는 fcgi_accept_requst()
 
 	// epoll에서 제거 필요
@@ -1164,7 +1164,7 @@ int main(int argc, char **argv) {
         return EFPM_EXIT_SOFTWARE;
     }
 
-	struct efpm_s *efpm = new_efpm(1, true);
+	struct efpm_s *efpm = new_efpm(5, true);
 	if(!efpm){
 		return EFPM_EXIT_SOFTWARE;
 	}

@@ -41,6 +41,7 @@ struct efpm_s {
 	int listening_socket;
 	int port;
 	int efd;
+	bool shutdown_sig;
 
 	struct efpm_event_module_s *event_module;
 	struct efpm_child_s **childs;
