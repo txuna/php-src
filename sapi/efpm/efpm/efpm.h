@@ -48,6 +48,7 @@ struct efpm_s {
 	int (*init)(struct efpm_s *this);
 	int (*run)(struct efpm_s *this);
 	int (*clean)(struct efpm_s *this);
+	int (*create_child)(struct efpm_s *this, int child_num);
 	struct efpm_child_s* (*get_child)(struct efpm_s *this, int cn);
 };
 
@@ -58,6 +59,7 @@ int efpm_clean(struct efpm_s *this);
 struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn);
 void efpm_signal_dead(struct efpm_event_s *ev, void *arg);
 void catch_signal(struct efpm_event_s *ev, void *arg);
+int efpm_create_child(struct efpm_s *this, int child_num);
 
 // child
 int efpm_child_init(struct efpm_child_s *this);

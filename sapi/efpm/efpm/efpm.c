@@ -43,6 +43,8 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
         return NULL;
     }
 
+    signal(SIGPIPE, SIG_IGN);
+
     efpm->port = 9000;
     efpm->worker = workers;
     efpm->reuseport = reuseport;
@@ -50,6 +52,7 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
     efpm->run = efpm_run;
     efpm->clean = efpm_clean;
     efpm->get_child = efpm_get_child;
+    efpm->create_child = efpm_create_child;
 }
 
 void del_efpm(struct efpm_s *efpm) {
@@ -104,9 +107,9 @@ void catch_signal(struct efpm_event_s *ev, void *arg) {
     struct signalfd_siginfo si;
     uint64_t v = DO_SHUTDOWN;
     read(ev->fd, &si, sizeof(si));
-    if(si.ssi_pid == 0){
-        this->shutdown_sig = true;
-        goto out;
+    if(si.ssi_code == SIGPIPE) {
+        printf("sig pipe, do ignore\n");
+        return;
     }
 
     for(int i=0; i<this->worker; i++){
@@ -141,7 +144,37 @@ void efpm_signal_dead(struct efpm_event_s *ev, void *arg) {
         } else if (WIFSIGNALED(status)) {
             printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
         }
+        
+        // for(int i=0; i<this->worker; i++){
+        //     struct efpm_child_s *child = this->childs[i];
+        //     if(pid == child->pid) {
+        //         if((*this->create_child)(this, i) == FAILURE) {
+        //             printf("failed to create child, pid=%d, num=%d\n", pid, i);
+        //         }
+        //         break;
+        //     }
+        // }
     }
+}
+
+int efpm_create_child(struct efpm_s *this, int child_num) {
+    struct efpm_child_s *child = this->childs[child_num];
+    pid_t pid = fork();
+    if(pid == 0) {
+        goto do_child;
+    } else if(pid < 0){
+        return FAILURE;
+    } else {
+        child->pid = pid;
+        return SUCCESS;
+    }
+
+do_child:
+    printf("run child\n");
+    efpm_parent = 0;
+    child_g = child;
+    (*child->init)(child);
+    return (*child->run)(child);
 }
 
 int efpm_run(struct efpm_s *this) {
