@@ -108,6 +108,7 @@ int fcgi_set_fd(fcgi_request *req, int fd);
 int fcgi_process_request(fcgi_request *req);
 struct sockaddr_in fcgi_get_sockaddr(fcgi_request *req);
 int get_peer_addr(int fd, struct sockaddr_in *addr);
+const char *fcgi_get_client_ip(struct sockaddr_in sa);
 
 #ifndef HAVE_ATTRIBUTE_WEAK
 typedef void (*fcgi_logger)(int type, const char *fmt, ...) ZEND_ATTRIBUTE_FORMAT(printf, 2, 3);

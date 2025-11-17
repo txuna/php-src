@@ -56,6 +56,7 @@
 #include "fastcgi.h"
 
 #include <php_config.h>
+#include "efpm_worker.h"
 #include "efpm_event.h"
 #include "efpm.h"
 #include "efpm_config.h"
@@ -109,9 +110,10 @@ typedef struct _php_cgi_globals_struct {
 static php_cgi_globals_struct php_cgi_globals;
 #define CGIG(v) (php_cgi_globals.v)
 
-static int parent = 1;
-static int request_body_fd;
-static int fpm_is_running = 0;
+int efpm_parent = 1;
+int efpm_request_body_fd; // 개트롤 변수네
+int efpm_is_running = 0;
+extern struct efpm_child_s *child_g;
 
 static int sapi_cgi_active() {
     return SUCCESS;
@@ -123,7 +125,7 @@ static int sapi_cgi_deactivate() {
 		2. When the first call occurs and the request is not set up, flush fails on FastCGI.
 	*/
 	if (SG(sapi_started)) {
-		if (!parent && !fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
+		if (!efpm_parent && !fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
 			php_handle_aborted_connection();
 		}
 	}
@@ -133,7 +135,7 @@ static int sapi_cgi_deactivate() {
 static char *sapi_cgibin_getenv(const char *name, size_t name_len) /* {{{ */
 {
 	/* if fpm has started, use fcgi env */
-	if (fpm_is_running) {
+	if (efpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
 		return fcgi_getenv(request, name, name_len);
 	}
@@ -204,13 +206,13 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 	}
 	while (read_bytes < count_bytes) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
-		if (request_body_fd == -1) {
+		if (efpm_request_body_fd == -1) {
 			char *request_body_filename = FCGI_GETENV(request, "REQUEST_BODY_FILE");
 
 			if (request_body_filename && *request_body_filename) {
-				request_body_fd = open(request_body_filename, O_RDONLY);
+				efpm_request_body_fd = open(request_body_filename, O_RDONLY);
 
-				if (0 > request_body_fd) {
+				if (0 > efpm_request_body_fd) {
 					php_error(E_WARNING, "REQUEST_BODY_FILE: open('%s') failed: %s (%d)",
 							request_body_filename, strerror(errno), errno);
 					return 0;
@@ -219,10 +221,10 @@ static size_t sapi_cgi_read_post(char *buffer, size_t count_bytes) /* {{{ */
 		}
 
 		/* If REQUEST_BODY_FILE variable not available - read post body from fastcgi stream */
-		if (request_body_fd < 0) {
+		if (efpm_request_body_fd < 0) {
 			tmp_read_bytes = fcgi_read(request, buffer + read_bytes, count_bytes - read_bytes);
 		} else {
-			tmp_read_bytes = read(request_body_fd, buffer + read_bytes, count_bytes - read_bytes);
+			tmp_read_bytes = read(efpm_request_body_fd, buffer + read_bytes, count_bytes - read_bytes);
 		}
 		if (tmp_read_bytes <= 0) {
 			break;
@@ -349,9 +351,9 @@ static int sapi_cgi_send_headers(sapi_headers_struct *sapi_headers) /* {{{ */
 static void sapi_cgibin_flush(void *server_context) /* {{{ */
 {
 	/* fpm has started, let use fcgi instead of stdout */
-	if (fpm_is_running) {
+	if (efpm_is_running) {
 		fcgi_request *request = (fcgi_request*) server_context;
-		if (!parent && request) {
+		if (!efpm_parent && request) {
 			sapi_send_headers();
 			if (!fcgi_flush(request, 0)) {
 				php_handle_aborted_connection();
@@ -372,7 +374,7 @@ static inline size_t sapi_cgibin_single_write(const char *str, uint32_t str_leng
 	ssize_t ret;
 
 	/* sapi has started which means everything must be send through fcgi */
-	if (fpm_is_running) {
+	if (efpm_is_running) {
 		fcgi_request *request = (fcgi_request*) SG(server_context);
 		ret = fcgi_write(request, FCGI_STDOUT, str, str_length);
 		if (ret <= 0) {
@@ -1067,20 +1069,82 @@ static void init_request_info(void)
 }
 /* }}} */
 
-// 없으면 dummy
-// static fcgi_request *efpm_init_request(int listen_fd) {
-//     fcgi_request *req = fcgi_init_request(listen_fd,
-//         efpm_request_accepting,   /* on_accept */
-//         efpm_request_reading_headers,   /* on_read */
-//         efpm_request_finished); /* on_close */
+void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
+    struct efpm_child_s *this = child_g;
+    fcgi_request *request = (fcgi_request *)arg;
+    struct sockaddr_in sa;
+	char *primary_script = NULL;
+	zend_file_handle file_handle;
+	int exit_status = EFPM_EXIT_OK;
+	int clnt_fd = fcgi_get_fd(request);
+    // printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request)); 
+    sa = fcgi_get_sockaddr(request);
+	printf("req from IP: %s, FD: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request));
+    // 원래는 fcgi_accept_requst()
 
-//     return req;
-// }
+	// epoll에서 제거 필요
+	ev->fd = clnt_fd;
+	if((*this->event_module->remove)(this->event_module, ev) == FAILURE){
+		printf("failed to remove handled request\n");
+	}
+
+    int ret = fcgi_process_request(request); 
+    if(ret == -1) {
+        printf("failed to fcgi_process_request()\n");
+        return;
+    }
+
+    efpm_request_body_fd = -1;
+    SG(server_context) = (void*)request;
+    CGIG(fcgi_logging_request_started) = false;
+	init_request_info();
+
+	php_request_startup();
+	if(!SG(request_info).request_method) {
+		printf("invalid request method\n");
+		return;
+	}
+
+	if(!SG(request_info).path_translated) {
+		printf("invalid path translated");
+		return;
+	}
+
+	primary_script = SG(request_info).path_translated;
+	if(php_fopen_primary_script(&file_handle) == FAILURE) {
+		printf("failed to php_fopen_primary_script()\n");
+		return;
+	}
+
+	// php script
+	EG(exit_status) = 0;
+	php_execute_script(&file_handle);
+
+	efree(primary_script);
+	efree(SG(request_info).path_translated);
+	if(!file_handle.in_list) {
+		zend_destroy_file_handle(&file_handle);
+	}
+
+	if(efpm_request_body_fd != -1) {
+		close(efpm_request_body_fd);
+	}
+
+	efpm_request_body_fd = -2;
+	if(EG(exit_status) == 255) {
+		printf("exit status code is 255\n");
+	}
+
+	SG(request_info).path_translated = NULL;
+	php_request_shutdown((void*)0);
+
+    return;
+}
 
 /* {{{ main */
 int main(int argc, char **argv) {
     printf("starting PHP-EFPM\n");
-    int exit_status = EFPM_EXIT_OK;
+    // int exit_status = EFPM_EXIT_OK;
     zend_file_handle file_handle;
     zend_signal_startup();
     sapi_startup(&cgi_sapi_module); // php_module_startup 포함됨.
@@ -1113,77 +1177,10 @@ int main(int argc, char **argv) {
 		return EFPM_EXIT_SOFTWARE;
 	}
 
-	return EFPM_EXIT_SOFTWARE;
-	// TODO
-	/*
-    int fcgi_fd = efpm_globals.listening_socket[efpm_globals.child_num];
-    fcgi_request *request = efpm_init_request(fcgi_fd);
-
-    fpm_is_running = 1;
-    parent = 0; // for child 
-
-    // request loop - for child->run()으로 변경하기
-    for(;;){
-		// eventLoop wait
-        if(fcgi_accept_request(request) < 0){
-            printf("failed to accept request\n");
-            fcgi_finish_request(request, 1);
-            continue;
-        }
-
-        char *primary_script = NULL; 
-        request_body_fd = -1;
-        SG(server_context) = (void *)request;
-        CGIG(fcgi_logging_request_started) = false;
-        init_request_info();
-       
-        php_request_startup();
-        if(!SG(request_info).request_method) {
-            continue;
-        }
-
-        if(!SG(request_info).path_translated) {
-            continue;
-        }
-
-        primary_script = SG(request_info).path_translated;
-        if(php_fopen_primary_script(&file_handle) == FAILURE) {
-            continue;
-        }
-
-        EG(exit_status) = 0;
-        php_execute_script(&file_handle);
-
-        // memory leak
-        efree(primary_script);
-        efree(SG(request_info).path_translated);
-        if(!file_handle.in_list){
-            zend_destroy_file_handle(&file_handle);
-        }
-
-        if(request_body_fd != -1){
-            close(request_body_fd);
-        }
-
-        request_body_fd = -2;
-
-        if(EG(exit_status) == 255){
-            printf("failed to exe\n");
-        }
-
-        SG(request_info).path_translated = NULL;
-        php_request_shutdown((void *)0); // write to client
-    }
-
-	// efpm_network_shutdown();
-    fcgi_shutdown();
-    php_module_shutdown();
-    
-	if(parent) {
-		sapi_shutdown();
+	if(efpm_parent) {
+		del_efpm(efpm);
 	}
 
-    return 0;
-	*/
+	return EFPM_EXIT_SOFTWARE;
 }
 /* }}} */

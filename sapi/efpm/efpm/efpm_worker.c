@@ -37,6 +37,10 @@
 
 struct efpm_child_s *child_g = NULL;
 
+extern int efpm_request_body_fd;
+extern int efpm_is_running;
+extern int efpm_parent;
+
 struct efpm_child_s *new_efpm_child(int child_num, int sock) {
     struct efpm_child_s *child = (struct efpm_child_s *)malloc(sizeof(struct efpm_child_s));
     if(!child){
@@ -67,16 +71,19 @@ static fcgi_request *efpm_init_request(int listen_fd) {
     return req;
 }
 
-void efpm_child_request_accepting() {
-    struct efpm_child_s *this = child_g;
+void efpm_child_request_accepting(void) {
+    // struct efpm_child_s *this = child_g;
+    return;
 }
 
-void efpm_child_request_reading_headers() {
-    struct efpm_child_s *this = child_g;
+void efpm_child_request_reading_headers(void) {
+    // struct efpm_child_s *this = child_g;
+    return;
 }
 
-void efpm_child_request_finished() {
-    struct efpm_child_s *this = child_g;
+void efpm_child_request_finished(void) {
+    // struct efpm_child_s *this = child_g;
+    return;
 }
 
 int efpm_child_init(struct efpm_child_s *this){
@@ -97,6 +104,7 @@ int efpm_child_init(struct efpm_child_s *this){
     4. int fcgi_set_fd(fcgi_request *req, int fd);
     5. int fcgi_process_request(fcgi_request *req);
     6. int get_peer_addr(int fd, struct sockaddr_in *addr);
+    7. const char *fcgi_get_client_ip(struct sockaddr_in sa);
 */
 int efpm_child_run(struct efpm_child_s *this){
     // fcgi_request *request = efpm_init_request(this->fcgi_fd);
@@ -127,16 +135,30 @@ void efpm_child_new_connection(struct efpm_event_s *ev, void *arg) {
 
 // 음 일단 초기버전은 클라이언트 요청을 무조건 다 처리하고 다음 콜백으로 넘어가야할듯 SAPI가 프로세스당으로 되어있어서 곤란함. - level trigger로 끝내야함.
 // 추후 ZTS(Zend Thread Safe TSRM) 리서치
-void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
-    struct efpm_child_s *this = child_g;
-    fcgi_request *request = (fcgi_request *)arg;
-    struct sockaddr_in sa;
+// void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
+//     struct efpm_child_s *this = child_g;
+//     fcgi_request *request = (fcgi_request *)arg;
+//     struct sockaddr_in sa;
 
-    printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request)); 
-    sa = fcgi_get_sockaddr(request);
-    // 원래는 fcgi_accept_requst()
+//     // printf("HANDLE CLIENT: %d\n", fcgi_get_fd(request)); 
+//     printf("req from IP: %s, FD: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request));
+//     sa = fcgi_get_sockaddr(request);
+//     // 원래는 fcgi_accept_requst()
 
-}
+//     int ret = fcgi_process_request(request); 
+//     if(ret == -1) {
+//         printf("failed to fcgi_process_request()\n");
+//         return;
+//     }
+
+//     char *primary_script = NULL; 
+//     efpm_request_body_fd = -1;
+//     SG(server_context) = (void*)request;
+//     // CGIG(fcgi_logging_request_started) = false;
+
+//     // epoll에서 제거 필요
+//     return;
+// }
 
 int efpm_child_clean(struct efpm_child_s *this){
     (*this->event_module->clean)(this->event_module);

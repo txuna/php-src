@@ -1375,7 +1375,7 @@ int get_peer_addr(int fd, struct sockaddr_in *addr) {
 struct sockaddr_in fcgi_get_sockaddr(fcgi_request *req)
 {
 	struct sockaddr_in peer;
-	get_peer_addr(fd, &peer);
+	get_peer_addr(req->fd, &peer);
 
 	return peer;
 }
@@ -1388,25 +1388,49 @@ int fcgi_accept_request2(fcgi_request *req)
 
 	req->hook.on_accept();
 
-	sa_t sa;
+	struct sockaddr_in sa;
 	socklen_t len = sizeof(sa);
 	req->fd = accept(req->listen_socket, (struct sockaddr*)&sa, &len);
+	if(req->fd < 0){
+		return -1;
+	}
 
 	// pthread 돌릴시 변경 필요함. 그냥 지금 빼버리고 커스텀하게 가는게 좋을듯
-	if(req->fd >= 0 && lient_sa.sa.sa_family != AF_INET) {
+	if(sa.sin_family != AF_INET) {
 		closesocket(req->fd);
 		req->fd = -1;
-		return -1;
+		return -1;p
 	}
 
 	return req->fd;
 }
 
-// req->fd 세팅된 상태임ㅇ
+// req->fd 세팅된 상태임
 int fcgi_process_request(fcgi_request *req)
 {	
 	if(in_shutdown) {
 		return -1;
+	}
+
+	if(req->fd < 0){
+		return -1;
+	}
+
+	int fd_attrs = fcntl(req->fd, F_GETFD); 
+	if(fd_attrs < 0){
+		return -1;
+	}
+
+	if(fcntl(req->fd, F_SETFD, fd_attrs | FD_CLOEXEC)) {
+		return -1;
+	}
+
+	req->hook.on_read();
+	int read_result = fcgi_read_request(req);
+	if (read_result == 1) {
+		return 0;
+	} else if(read_result == 0){
+		fcgi_close(req, 1, 1);
 	}
 
 	return 0;
@@ -1829,5 +1853,15 @@ const char *fcgi_get_last_client_ip(void)
 	}
 #endif
 	/* Unix socket */
+	return NULL;
+}
+
+const char *fcgi_get_client_ip(struct sockaddr_in sa) 
+{
+	static char str[INET6_ADDRSTRLEN];
+	if(sa.sin_family == AF_INET) {
+		return inet_ntop(sa.sin_family, &sa.sin_addr, str, INET6_ADDRSTRLEN); 
+	}	
+
 	return NULL;
 }

@@ -12,6 +12,9 @@
 #include <sys/eventfd.h>
 #include <sys/signalfd.h>
 
+#include "SAPI.h"
+#include "fastcgi.h"
+
 #include "zend.h"
 
 #include "efpm_event.h"
@@ -20,6 +23,9 @@
 #include "php_main.h"
 
 extern struct efpm_child_s *child_g;
+extern int efpm_request_body_fd;
+extern int efpm_is_running;
+extern int efpm_parent;
 
 struct efpm_s *new_efpm(int workers, int reuseport) {
     struct efpm_s *efpm = (struct efpm_s *)malloc(sizeof(struct efpm_s));
@@ -131,6 +137,8 @@ void efpm_signal_dead(struct efpm_event_s *ev, void *arg) {
 
 int efpm_run(struct efpm_s *this) {
     struct efpm_child_s *child;
+    efpm_is_running = 1;
+
     for(int i=0; i<this->worker; i++){
         child = this->childs[i];
         pid_t pid = fork();
@@ -177,6 +185,7 @@ int efpm_run(struct efpm_s *this) {
     return (*this->clean)(this);
 
 child:
+    efpm_parent = 0;
     child_g = child;
     (*child->init)(child);
     return (*child->run)(child);
@@ -214,6 +223,10 @@ int efpm_clean(struct efpm_s *this){
     free(this->event_module);
     free(this->childs);
     close(this->listening_socket);
+
+    fcgi_shutdown();
+    php_module_shutdown();
+    sapi_shutdown();
 
     return SUCCESS;
 }
