@@ -6,7 +6,7 @@
 struct efpm_event_s {
     int fd; 
     int index;
-    void (*callback)(struct efpm_event_s *, void *);
+    void (*callback)(struct efpm_event_s *, uint32_t, void *);
     void *arg;
 };
 
@@ -28,14 +28,14 @@ struct efpm_event_module_s {
     int (*wait)(struct efpm_event_module_s *this);
     int (*add)(struct efpm_event_module_s *this, struct efpm_event_s *ev);
     int (*remove)(struct efpm_event_module_s *this, struct efpm_event_s *ev);
-    void (*fire)(struct efpm_event_module_s *this, struct efpm_event_s *ev);
+    void (*fire)(struct efpm_event_module_s *this, uint32_t flags, struct efpm_event_s *ev);
 };
 
 struct efpm_event_module_s *new_event_module(int max);
-struct efpm_event_s *efpm_event_set(int fd, void (*callback)(struct efpm_event_s *, void *arg), void *arg);
+struct efpm_event_s *efpm_event_set(int fd, void (*callback)(struct efpm_event_s *, uint32_t flags, void *arg), void *arg);
 int new_timerfd(int sec, int milli);
 
-void efpm_event_fire(struct efpm_event_module_s *this, struct efpm_event_s *ev) ;
+void efpm_event_fire(struct efpm_event_module_s *this, uint32_t flags, struct efpm_event_s *ev) ;
 int efpm_event_init_main(struct efpm_event_module_s *this);
 int efpm_event_clean(struct efpm_event_module_s *this);
 int efpm_event_wait(struct efpm_event_module_s *this);

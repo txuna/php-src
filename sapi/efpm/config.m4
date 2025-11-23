@@ -76,7 +76,6 @@ if test "$PHP_EFPM" != "no"; then
   dnl Source files for efpm SAPI
   PHP_EFPM_FILES="efpm/efpm.c \
     efpm/efpm_event.c \
-    efpm/efpm_worker.c \
     efpm/efpm_main.c \
   "
 

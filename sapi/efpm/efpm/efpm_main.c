@@ -56,7 +56,6 @@
 #include "fastcgi.h"
 
 #include <php_config.h>
-#include "efpm_worker.h"
 #include "efpm_event.h"
 #include "efpm.h"
 #include "efpm_config.h"
@@ -110,10 +109,9 @@ typedef struct _php_cgi_globals_struct {
 static php_cgi_globals_struct php_cgi_globals;
 #define CGIG(v) (php_cgi_globals.v)
 
-int efpm_parent = 1;
 int efpm_request_body_fd; // 개트롤 변수네
 int efpm_is_running = 0;
-extern struct efpm_child_s *child_g;
+struct efpm_s *efpm_g;
 
 static int sapi_cgi_active() {
     return SUCCESS;
@@ -125,7 +123,7 @@ static int sapi_cgi_deactivate() {
 		2. When the first call occurs and the request is not set up, flush fails on FastCGI.
 	*/
 	if (SG(sapi_started)) {
-		if (!efpm_parent && !fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
+		if (!fcgi_finish_request((fcgi_request*)SG(server_context), 0)) {
 			php_handle_aborted_connection();
 		}
 	}
@@ -353,7 +351,7 @@ static void sapi_cgibin_flush(void *server_context) /* {{{ */
 	/* fpm has started, let use fcgi instead of stdout */
 	if (efpm_is_running) {
 		fcgi_request *request = (fcgi_request*) server_context;
-		if (!efpm_parent && request) {
+		if (request) {
 			sapi_send_headers();
 			if (!fcgi_flush(request, 0)) {
 				php_handle_aborted_connection();
@@ -491,18 +489,6 @@ static void fcgi_log(int type, const char *format, ...) {
 static const char HARDCODED_INI[] =
 "html_errors=0\nregister_argc_argv=0\nimplicit_flush=1\noutput_buffering=0\n"
 "max_execution_time=0\n";
-
-void efpm_request_accepting() {
-    // printf("accept\n");
-}
-
-void efpm_request_reading_headers() {
-    // printf("reading header\n");
-}
-
-void efpm_request_finished() {
-    // printf("request finished\n");
-}
 
 #define EFPM_PHP_INI_ALTERING_ERROR   -1
 #define EFPM_PHP_INI_APPLIED          1
@@ -1069,8 +1055,8 @@ static void init_request_info(void)
 }
 /* }}} */
 
-void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
-    struct efpm_child_s *this = child_g;
+void efpm_handle_client(struct efpm_event_s *ev, uint32_t flags, void *arg) {
+    struct efpm_s *this = efpm_g;
     fcgi_request *request = (fcgi_request *)arg;
     struct sockaddr_in sa;
 	char *primary_script = NULL;
@@ -1079,14 +1065,7 @@ void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
 	int clnt_fd = fcgi_get_fd(request);
 
     sa = fcgi_get_sockaddr(request);
-	// printf("req from IP: %s, FD: %d, PID: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request), getpid());
-    // 원래는 fcgi_accept_requst()
-
-	// epoll에서 제거 필요
-	ev->fd = clnt_fd;
-	if((*this->event_module->remove)(this->event_module, ev) == FAILURE){
-		printf("failed to remove handled request\n");
-	}
+	printf("req from IP: %s, FD: %d, PID: %d\n", fcgi_get_client_ip(sa), fcgi_get_fd(request), getpid());
 
     int ret = fcgi_process_request(request); 
     if(ret == -1) {
@@ -1116,6 +1095,13 @@ void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
 		return;
 	}
 
+	ev->fd = clnt_fd;
+	if((*this->event_module->remove)(this->event_module, ev) == FAILURE){
+		printf("failed to remove handled request\n");
+	}
+
+	// 여기만 알면되지? php_execute_script만 따로 스레딩 ? 
+
 	// php script
 	EG(exit_status) = 0;
 	php_execute_script(&file_handle);
@@ -1135,23 +1121,20 @@ void efpm_child_handle_connection(struct efpm_event_s *ev, void *arg) {
 		printf("exit status code is 255\n");
 	}
 
+	fcgi_finish_request(request, 0);
+	fcgi_destroy_request(request);
+
 	SG(request_info).path_translated = NULL;
 	php_request_shutdown((void*)0);
-
     return;
 }
 
 /* {{{ main */
 int main(int argc, char **argv) {
     printf("starting PHP-EFPM\n");
-    // int exit_status = EFPM_EXIT_OK;
     zend_file_handle file_handle;
     zend_signal_startup();
     sapi_startup(&cgi_sapi_module); // php_module_startup 포함됨.
-
-#ifndef HAVE_ATTRIBUTE_WEAK
-	fcgi_set_logger(fcgi_log);
-#endif
 
     fcgi_init();
 
@@ -1164,7 +1147,7 @@ int main(int argc, char **argv) {
         return EFPM_EXIT_SOFTWARE;
     }
 
-	struct efpm_s *efpm = new_efpm(5, true);
+	struct efpm_s *efpm = new_efpm();
 	if(!efpm){
 		return EFPM_EXIT_SOFTWARE;
 	}
@@ -1177,10 +1160,11 @@ int main(int argc, char **argv) {
 		return EFPM_EXIT_SOFTWARE;
 	}
 
-	if(efpm_parent) {
-		del_efpm(efpm);
-	}
+	fcgi_shutdown();
+	SG(server_context) = NULL;
+	php_module_shutdown();
+	sapi_shutdown();
 
-	return EFPM_EXIT_SOFTWARE;
+	return 0;
 }
 /* }}} */

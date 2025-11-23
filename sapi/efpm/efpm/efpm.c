@@ -18,16 +18,16 @@
 #include "zend.h"
 
 #include "efpm_event.h"
-#include "efpm_worker.h"
 #include "efpm.h"
 #include "php_main.h"
 
-extern struct efpm_child_s *child_g;
 extern int efpm_request_body_fd;
 extern int efpm_is_running;
-extern int efpm_parent;
+extern struct efpm_s *efpm_g;
 
-struct efpm_s *new_efpm(int workers, int reuseport) {
+static fcgi_request *efpm_init_request(int listen_fd);
+
+struct efpm_s *new_efpm() {
     struct efpm_s *efpm = (struct efpm_s *)malloc(sizeof(struct efpm_s));
     if(!efpm) {
         return NULL;
@@ -38,21 +38,17 @@ struct efpm_s *new_efpm(int workers, int reuseport) {
         return NULL;
     }
 
-    efpm->childs = (struct efpm_child_s **)malloc(sizeof(struct efpm_child_s*) * workers);
-    if(!efpm->childs) {
-        return NULL;
-    }
-
     signal(SIGPIPE, SIG_IGN);
 
     efpm->port = 9000;
-    efpm->worker = workers;
-    efpm->reuseport = reuseport;
     efpm->init = efpm_init;
     efpm->run = efpm_run;
     efpm->clean = efpm_clean;
-    efpm->get_child = efpm_get_child;
-    efpm->create_child = efpm_create_child;
+
+    // 전역변수 세팅
+    efpm_g = efpm;
+
+    return efpm;    
 }
 
 void del_efpm(struct efpm_s *efpm) {
@@ -73,14 +69,6 @@ int efpm_init(struct efpm_s *this) {
     this->listening_socket = sock;
     (*this->event_module->init)(this->event_module);
 
-    // child
-    for(int i=0; i<this->worker; i++){
-        this->childs[i] = new_efpm_child(i, sock);
-        if(!this->childs[i]) {
-            return FAILURE;
-        }
-    }
-
     // eventfd 
     int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if(efd == -1){
@@ -90,19 +78,18 @@ int efpm_init(struct efpm_s *this) {
     this->event_module->efd = efd;
     this->efd = efd;
 
-    struct efpm_event_s *ev = efpm_event_set(efd, &efpm_signal_dead, this);
+    struct efpm_event_s *ev = efpm_event_set(efd, &efpm_server_event, this);
     (*this->event_module->add)(this->event_module, ev);
+
+    // listening socket 등록
+    struct efpm_event_s *ev2 = efpm_event_set(this->listening_socket, &efpm_accept_client, this); 
+    (*this->event_module->add)(this->event_module, ev2);
 
     return SUCCESS;
 }
 
-
-// @@ TODO 수정 필요
-void catch_signal(struct efpm_event_s *ev, void *arg) {
+void catch_signal(struct efpm_event_s *ev, uint32_t flags, void *arg) {
     struct efpm_s *this = (struct efpm_s *)arg;
-    if(!efpm_parent) {
-        return;
-    }
 
     struct signalfd_siginfo si;
     uint64_t v = DO_SHUTDOWN;
@@ -112,88 +99,18 @@ void catch_signal(struct efpm_event_s *ev, void *arg) {
         return;
     }
 
-    for(int i=0; i<this->worker; i++){
-        struct efpm_child_s *child = this->childs[i];
-        if(si.ssi_pid == child->pid){
-            v = DO_CHILD;
-            break;
-        }
-    }
-
-out:
-    write(this->efd, &v, sizeof(v));
+    write(this->efd, &v, sizeof(v));    
 }
 
-void efpm_signal_dead(struct efpm_event_s *ev, void *arg) {
+void efpm_server_event(struct efpm_event_s *ev, uint32_t flags, void *arg) {
     struct efpm_s *this = (struct efpm_s *)arg;
-
-    int status = 0;
-    while(1){
-        pid_t pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
-        if(pid < 0){
-            return;
-        }
-
-        if(pid == 0){
-            return;
-        }
-
-        // 재부활 로직 추가 필요
-        if (WIFEXITED(status)) {
-            printf("child %d exited, status=%d\n", pid, WEXITSTATUS(status));
-        } else if (WIFSIGNALED(status)) {
-            printf("child %d killed by signal %d\n", pid, WTERMSIG(status));
-        }
-        
-        // for(int i=0; i<this->worker; i++){
-        //     struct efpm_child_s *child = this->childs[i];
-        //     if(pid == child->pid) {
-        //         if((*this->create_child)(this, i) == FAILURE) {
-        //             printf("failed to create child, pid=%d, num=%d\n", pid, i);
-        //         }
-        //         break;
-        //     }
-        // }
-    }
+    printf("serve event!\n");
 }
 
-int efpm_create_child(struct efpm_s *this, int child_num) {
-    struct efpm_child_s *child = this->childs[child_num];
-    pid_t pid = fork();
-    if(pid == 0) {
-        goto do_child;
-    } else if(pid < 0){
-        return FAILURE;
-    } else {
-        child->pid = pid;
-        return SUCCESS;
-    }
-
-do_child:
-    printf("run child\n");
-    efpm_parent = 0;
-    child_g = child;
-    (*child->init)(child);
-    return (*child->run)(child);
-}
+#define SIG_BLOCK 0
 
 int efpm_run(struct efpm_s *this) {
-    struct efpm_child_s *child;
     efpm_is_running = 1;
-
-    for(int i=0; i<this->worker; i++){
-        child = this->childs[i];
-        pid_t pid = fork();
-        if(pid == 0) {
-            // child
-            goto child;
-        } else if(pid < 0){
-            // error
-        } else {
-            // parent
-            child->pid = pid;
-        }
-    }
 
     // 시그널 감지 추가
     sigset_t mask;
@@ -225,45 +142,14 @@ int efpm_run(struct efpm_s *this) {
     }
 
     return (*this->clean)(this);
-
-child:
-    efpm_parent = 0;
-    child_g = child;
-    (*child->init)(child);
-    return (*child->run)(child);
-}
-
-struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn) {
-    for(int i=0; i<this->worker; i++){
-        if(i==cn){
-            return this->childs[i];
-        }
-    }
-
-    return NULL;
 }
 
 int efpm_clean(struct efpm_s *this){
-    if(!this->childs){
-        return SUCCESS;
-    }
-
-    // 자식 프로세스 정리
-    for(int i=0;i<this->worker;i++){
-        struct efpm_child_s *child = this->childs[i];
-        if(!child){
-            continue;
-        }
-
-        kill(child->pid, SIGTERM);
-        free(this->childs[i]);
-    }
 
     // 이벤트 모듈 정리
     (*this->event_module->clean)(this->event_module);
 
     free(this->event_module);
-    free(this->childs);
     close(this->listening_socket);
 
     fcgi_shutdown();
@@ -303,3 +189,55 @@ int efpm_socket(int port) {
 
     return sock;
 }
+
+/*
+    new API for fastcgi
+    1. fcgi_get_fd(fcgi_request *request);
+    2. fcgi_get_listenfd(fcgi_request* request);
+    3. fcgi_accept_request2(fcgi_request* request);
+    4. int fcgi_set_fd(fcgi_request *req, int fd);
+    5. int fcgi_process_request(fcgi_request *req);
+    6. int get_peer_addr(int fd, struct sockaddr_in *addr);
+    7. const char *fcgi_get_client_ip(struct sockaddr_in sa);
+*/
+void efpm_accept_client(struct efpm_event_s *ev, uint32_t flags, void *arg) {
+    struct efpm_s *this = (struct efpm_s *)arg;
+
+    struct sockaddr_in sa; 
+    unsigned int len = sizeof(sa); 
+
+    fcgi_request *request = efpm_init_request(this->listening_socket);
+    int client_fd = fcgi_accept_request2(request);
+    if(client_fd == -1) {
+        printf("failed to fcgi_accept_request2()\n");
+        return;
+    }
+
+    struct efpm_event_s *ev2 = efpm_event_set(client_fd, &efpm_handle_client, request);
+    (*this->event_module->add)(this->event_module, ev2);
+}
+
+static fcgi_request *efpm_init_request(int listen_fd) {
+    fcgi_request *req = fcgi_init_request(listen_fd,
+        efpm_request_accepting,   /* on_accept */
+        efpm_request_reading_headers,   /* on_read */
+        efpm_request_finished); /* on_close */
+
+    return req;
+}
+
+void efpm_request_accepting(void) {
+    return; 
+}
+
+void efpm_request_reading_headers(void) {
+    return;
+}
+
+void efpm_request_finished(void) {
+    return;
+}
+
+// void efpm_handle_client(struct efpm_event_s *ev, void *arg) {
+
+// }

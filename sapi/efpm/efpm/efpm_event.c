@@ -82,6 +82,8 @@ int efpm_event_clean(struct efpm_event_module_s *this) {
     return SUCCESS;
 }
 
+#define CLOCK_MONOTONIC 1
+
 int new_timerfd(int sec, int milli) {
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
 
@@ -99,7 +101,7 @@ int new_timerfd(int sec, int milli) {
     return tfd;
 }
 
-struct efpm_event_s *efpm_event_set(int fd, void (*callback)(struct efpm_event_s *, void *arg), void *arg) {
+struct efpm_event_s *efpm_event_set(int fd, void (*callback)(struct efpm_event_s *, uint32_t flags, void *arg), void *arg) {
     struct efpm_event_s *ev = (struct efpm_event_s *)malloc(sizeof(struct efpm_event_s));
     if(!ev){
         return NULL;
@@ -154,7 +156,7 @@ int efpm_event_remove(struct efpm_event_module_s *this, struct efpm_event_s *ev)
     e.events = EPOLLIN;
     e.data.ptr = ev;
 
-    if(epoll_ctl(this->epollfd, EPOLL_CTL_DEL, ev->fd, &e) == -1){
+    if(epoll_ctl(this->epollfd, EPOLL_CTL_DEL, ev->fd, NULL) == -1){
         printf("epoll_ctl(): %d\n", errno);
         return FAILURE;
     }
@@ -209,6 +211,8 @@ int efpm_event_wait(struct efpm_event_module_s *this) {
                 continue;
             }
 
+
+
             struct efpm_event_s *ev = (struct efpm_event_s *)this->epollfds[i].data.ptr;
             if(ev->fd == this->efd){
                 uint64_t cnt;
@@ -223,17 +227,19 @@ int efpm_event_wait(struct efpm_event_module_s *this) {
                     }
                 }
             }
-
-            (*this->fire)(this, ev);
+            
+            uint32_t flags = this->epollfds[i].events;
+            printf("flags: %d\n", flags);
+            (*this->fire)(this, flags, ev);
         }
     }
 }
 
-void efpm_event_fire(struct efpm_event_module_s *this, struct efpm_event_s *ev) {
+void efpm_event_fire(struct efpm_event_module_s *this,  uint32_t flags, struct efpm_event_s *ev) {
     if(!ev || !ev->callback) {
         return;
     }
 
-    (*ev->callback)(ev, ev->arg);
+    (*ev->callback)(ev, flags, ev->arg);
 }
 

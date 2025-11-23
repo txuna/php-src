@@ -11,7 +11,6 @@
 #define EFPM_EXIT_CONFIG 78
 
 #define DO_SHUTDOWN 1
-#define DO_CHILD 2
 
 enum efpm_init_return_status {
 	EFPM_INIT_ERROR,
@@ -23,18 +22,6 @@ struct efpm_conn_s {
 
 };
 
-struct efpm_child_s {
-	pid_t pid;
-	pid_t parent_pid;
-	int child_num;
-	int fcgi_fd;
-	struct efpm_event_module_s *event_module;
-
-	int (*init)(struct efpm_child_s *this);
-	int (*run)(struct efpm_child_s *this);
-	int (*clean)(struct efpm_child_s *this);
-};
-
 struct efpm_s {
 	int worker;
 	int reuseport; 
@@ -44,41 +31,26 @@ struct efpm_s {
 	bool shutdown_sig;
 
 	struct efpm_event_module_s *event_module;
-	struct efpm_child_s **childs;
 	int (*init)(struct efpm_s *this);
 	int (*run)(struct efpm_s *this);
 	int (*clean)(struct efpm_s *this);
-	int (*create_child)(struct efpm_s *this, int child_num);
-	struct efpm_child_s* (*get_child)(struct efpm_s *this, int cn);
 };
 
 // parent
 int efpm_init(struct efpm_s *this);
 int efpm_run(struct efpm_s *this);
 int efpm_clean(struct efpm_s *this);
-struct efpm_child_s *efpm_get_child(struct efpm_s *this, int cn);
-void efpm_signal_dead(struct efpm_event_s *ev, void *arg);
-void catch_signal(struct efpm_event_s *ev, void *arg);
-int efpm_create_child(struct efpm_s *this, int child_num);
+void efpm_server_event(struct efpm_event_s *ev, uint32_t flags, void *arg);
+void catch_signal(struct efpm_event_s *ev, uint32_t flags, void *arg);
+void efpm_accept_client(struct efpm_event_s *ev, uint32_t flags, void *arg);
+void efpm_handle_client(struct efpm_event_s *ev, uint32_t flags, void *arg); 
 
-// child
-int efpm_child_init(struct efpm_child_s *this);
-int efpm_child_run(struct efpm_child_s *this);
-int efpm_child_clean(struct efpm_child_s *this);
+void efpm_request_accepting(void);
+void efpm_request_reading_headers(void);
+void efpm_request_finished(void);
 
-struct efpm_child_s *new_efpm_child(int child_num, int sock);
-struct efpm_s *new_efpm(int workers, int reuseport);
+struct efpm_s *new_efpm();
 void del_efpm(struct efpm_s *efpm);
 int efpm_socket(int port);
-
-struct efpm_globals_s {
-	pid_t parent_pid;
-	int *listening_socket; /* for this child */
-	int is_child;
-	int child_num;
-	int w_fd; 
-};
-
-extern struct efpm_globals_s efpm_globals;
 
 #endif
